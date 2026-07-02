@@ -1,0 +1,51 @@
+{% extends 'base.html' %}{% block content %}
+<div class="hero card">
+  <div>
+    <span class="eyebrow">CAFÉS EM DEPÓSITO</span>
+    <h1>Cafés em depósito dos clientes</h1>
+    <p class="subtitle">Veja todos os lotes que ainda têm sacas para vender, somando todos os clientes. É a tela para responder rápido: “quanto café ainda tem aqui?”</p>
+  </div>
+  <div class="hero-note">
+    <b>Total disponível</b>
+    <p>{{ total_sacas|num }} sacas<br>{{ valor_estimado|money }} estimado</p>
+  </div>
+</div>
+
+<div class="grid metrics">
+  <div class="card metric"><small>Sacas em depósito</small><strong>{{ total_sacas|num }} sacas</strong></div>
+  <div class="card metric"><small>Valor estimado em depósito</small><strong>{{ valor_estimado|money }}</strong></div>
+  <div class="card metric"><small>Total já vendido desses lotes</small><strong>{{ total_vendido|money }}</strong></div>
+</div>
+
+<div class="card">
+  <form method="get" class="form solo-4">
+    <div><label>Buscar cliente, lote, fazenda ou tipo</label><input name="q" value="{{ q }}" placeholder="Ex: Ruan, Rio, Sítio..."></div>
+    <div><label>Tipo de café</label><select name="tipo"><option value="">Todos</option>{% for t in tipos_cafe %}<option value="{{ t }}" {% if tipo==t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    <button class="btn">Filtrar</button>
+    <a class="btn light" href="{{ url_for('depositos') }}">Limpar</a>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Lotes com saldo para vender</h2>
+  <p class="subtitle">Cada linha mostra o que entrou, o que já saiu e o saldo atual daquele lote.</p>
+  <table>
+    <tr><th>Cliente</th><th>Tipo</th><th>Lote</th><th>Entrada</th><th>Já vendido</th><th>Saldo atual</th><th>Valor estimado</th><th>Preço referência</th><th>Ações</th></tr>
+    {% for d in depositos %}
+    <tr>
+      <td><b>{{ d.pessoa_nome or 'Sem cadastro' }}</b><br><small>{{ d.telefone or d.whatsapp or '' }}</small></td>
+      <td>{{ d.tipo_cafe or '-' }}</td>
+      <td>{{ d.lote or ('Lote ' ~ d.id) }}<br><small>{{ d.origem_cafe or '' }}</small></td>
+      <td>{{ d.quantidade_sacas|num }} sacas</td>
+      <td>{{ d.vendido|num }} sacas<br><small>{{ d.valor_vendido|money }}</small></td>
+      <td><b>{{ d.estoque_lote|num }} sacas</b></td>
+      <td>{{ (d.estoque_lote * d.valor_saca)|money }}</td>
+      <td>{{ d.valor_saca|money }}</td>
+      <td class="actions"><a class="mini" href="{{ url_for('historico_lote', compra_id=d.id) }}" target="_blank">Histórico</a><a class="mini" href="{{ url_for('editar_compra', compra_id=d.id) }}">Vender parte</a>{% if d.pessoa_id %}<a class="mini" href="{{ url_for('painel_cliente', pessoa_id=d.pessoa_id) }}">Cliente</a>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9">Nenhum café em depósito com saldo para vender.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

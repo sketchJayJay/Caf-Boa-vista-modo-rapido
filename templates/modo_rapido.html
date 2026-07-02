@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero card quick-hero">
+  <div>
+    <span class="eyebrow">MODO RÁPIDO</span>
+    <h1>O que você quer fazer agora?</h1>
+    <p class="subtitle">Tela simples para o dia corrido: lançar prova, colocar café em depósito, vender parte e consultar acerto sem caçar função no menu.</p>
+  </div>
+  <div class="hero-note">
+    <b>Atalho do balcão</b>
+    <p>Use esses botões no dia a dia. O restante continua no menu para quando precisar.</p>
+  </div>
+</div>
+
+<div class="grid quick-actions">
+  <a class="card action-card" href="{{ url_for('provas') }}">
+    <span>☕</span><strong>Nova prova</strong><small>Lançar resultado, cata, bebida e umidade.</small>
+  </a>
+  <a class="card action-card" href="{{ url_for('rapido_deposito') }}">
+    <span>📦</span><strong>Café entrou em depósito</strong><small>Cliente deixou café guardado para vender depois.</small>
+  </a>
+  <a class="card action-card" href="{{ url_for('rapido_vender') }}">
+    <span>💸</span><strong>Cliente vendeu café</strong><small>Venda parcial e baixa automática do saldo.</small>
+  </a>
+  <a class="card action-card" href="{{ url_for('clientes') }}">
+    <span>🤝</span><strong>Acertar cliente</strong><small>Ver valores pegos, juros, Pix e líquido a pagar.</small>
+  </a>
+  <a class="card action-card" href="{{ url_for('depositos') }}">
+    <span>🏚️</span><strong>Consultar depósitos</strong><small>Ver todos os cafés que ainda estão guardados.</small>
+  </a>
+  <a class="card action-card" href="{{ url_for('backup') }}">
+    <span>🛡️</span><strong>Baixar backup</strong><small>Seguro antes de atualizar ou mexer no sistema.</small>
+  </a>
+</div>
+
+<div class="section-title" style="margin-top:18px"><h2>Resumo rápido</h2></div>
+<div class="grid metrics">
+  <div class="card metric"><small>Sacas em depósito</small><strong>{{ total_deposito|num }}</strong></div>
+  <div class="card metric"><small>Valor estimado</small><strong>{{ valor_deposito|money }}</strong></div>
+  <div class="card metric"><small>Provas hoje</small><strong>{{ provas_hoje|length }}</strong></div>
+  <div class="card metric"><small>Vendas hoje</small><strong>{{ vendas_hoje|length }}</strong></div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <div class="section-title"><h2>Movimento de hoje</h2><small>{{ hoje }}</small></div>
+    <table>
+      <tr><th>Tipo</th><th>Cliente</th><th>Resumo</th><th>Ação</th></tr>
+      {% for p in provas_hoje %}<tr><td>Prova</td><td>{{ p.cliente_nome }}</td><td>{{ p.quantidade_sacas|num }} sacas • {{ p.bebida or '-' }} • Cata {{ p.cata or '-' }}</td><td><a class="mini" href="{{ url_for('comprovante_prova', prova_id=p.id) }}" target="_blank">Comprovante</a></td></tr>{% endfor %}
+      {% for c in compras_hoje %}<tr><td>Depósito</td><td>{{ c.pessoa_nome or '-' }}</td><td>{{ c.estoque_lote|num }} sacas restantes • {{ c.tipo_cafe or '-' }} • {{ c.lote or 'Lote ' ~ c.id }}</td><td><a class="mini" href="{{ url_for('editar_compra', compra_id=c.id) }}">Abrir</a></td></tr>{% endfor %}
+      {% for v in vendas_hoje %}<tr><td>Venda</td><td>{{ v.pessoa_nome or '-' }}</td><td>{{ v.quantidade_sacas|num }} sacas • {{ v.valor_total|money }} • {{ v.status_recebimento or '-' }}</td><td><a class="mini" href="{{ url_for('recibo_venda_parcial', venda_id=v.id) }}" target="_blank">Recibo</a></td></tr>{% endfor %}
+      {% for a in valores_hoje %}<tr><td>Valor pego</td><td>{{ a.pessoa_nome or '-' }}</td><td>{{ a.valor|money }} • juros {{ a.valor_juros|money }} • {{ a.status }}</td><td>{% if a.pessoa_id %}<a class="mini" href="{{ url_for('painel_cliente', pessoa_id=a.pessoa_id) }}">Cliente</a>{% endif %}</td></tr>{% endfor %}
+      {% if not provas_hoje and not compras_hoje and not vendas_hoje and not valores_hoje %}<tr><td colspan="4">Nada lançado hoje ainda.</td></tr>{% endif %}
+    </table>
+  </div>
+  <div class="card">
+    <h2>Como usar no dia a dia</h2>
+    <p class="subtitle">O caminho mais simples para ele começar sem travar.</p>
+    <ol class="simple-list">
+      <li>Fez prova? Clica em <b>Nova prova</b>.</li>
+      <li>Cliente deixou café guardado? Clica em <b>Café entrou em depósito</b>.</li>
+      <li>Cliente vendeu uma parte? Clica em <b>Cliente vendeu café</b>.</li>
+      <li>Vai pagar ou conferir? Clica em <b>Acertar cliente</b>.</li>
+    </ol>
+  </div>
+</div>
+
+<style>
+.quick-actions{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-bottom:18px}.action-card{text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:8px;min-height:145px;justify-content:center}.action-card span{font-size:34px}.action-card strong{font-size:20px}.action-card:hover{transform:translateY(-2px)}.simple-list li{margin:10px 0}
+</style>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero card">
+  <div><span class="eyebrow">MODO RÁPIDO</span><h1>Café entrou em depósito</h1><p class="subtitle">Use quando o cliente deixar café guardado para vender depois. O sistema já cria o lote e mostra no saldo do cliente.</p></div>
+  <div class="hero-note"><b>Sem complicar</b><p>Escolha cliente cadastrado ou digite um nome rápido. Depois complete o cadastro se precisar.</p></div>
+</div>
+<div class="card">
+  <form method="post" class="form calc-sacas" id="form-deposito">
+    <div><label>Data</label><input type="date" name="data" value="{{ hoje }}" required></div>
+    <div><label>Buscar cliente cadastrado</label><input type="search" class="select-search" data-target="pessoa_id" placeholder="Digite para filtrar"></div>
+    <div><label>Cliente cadastrado</label><select name="pessoa_id" id="pessoa_id"><option value="">Não está cadastrado / lançar rápido</option>{% for p in pessoas %}<option value="{{ p.id }}">{{ p.nome }}</option>{% endfor %}</select></div>
+    <div><label>Nome rápido do cliente</label><input name="nome_rapido" placeholder="Ex: João da Fazenda"></div>
+    <div><label>WhatsApp rápido</label><input name="whatsapp_rapido" placeholder="Opcional"></div>
+    <div><label>CPF/CNPJ rápido</label><input name="documento_rapido" placeholder="Opcional"></div>
+    <div><label>Lote</label><input name="lote" placeholder="Ex: Lote 001"></div>
+    <div><label>Fazenda/origem</label><input name="origem_cafe" placeholder="Opcional"></div>
+    <div><label>Tipo de café</label><select name="tipo_cafe"><option value="">Selecione</option>{% for t in tipos_cafe %}<option>{{ t }}</option>{% endfor %}</select></div>
+    <div><label>Peso KG</label><input type="number" step="0.01" name="peso_kg" class="peso" placeholder="Ex: 1580"></div>
+    <div><label>KG por saca</label><input type="number" step="0.01" name="divisor_saca" class="divisor" value="60"></div>
+    <div><label>Ajuste de sacas</label><input type="number" step="0.01" name="ajuste_sacas" class="ajuste" value="0"></div>
+    <div><label>Sacas finais</label><input type="number" step="0.01" name="quantidade_sacas" class="sacas" placeholder="Calcula automático ou digite"></div>
+    <div><label>Preço simbólico / referência</label><input type="number" step="0.01" name="valor_saca" value="0"><small class="hint">Pode deixar 0 se ainda não fez preço.</small></div>
+    <div><label>Forma pagamento</label><input name="forma_pagamento" placeholder="Opcional"></div>
+    <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: cliente deixou em depósito, sem preço fechado"></div>
+    <button class="btn">Salvar café em depósito</button>
+  </form>
+</div>
+<div class="quick"><a class="btn light" href="{{ url_for('modo_rapido') }}">Voltar ao Modo Rápido</a><a class="btn light" href="{{ url_for('depositos') }}">Ver cafés em depósito</a></div>
+{% endblock %}

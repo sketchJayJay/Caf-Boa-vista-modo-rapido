@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero card">
+  <div><span class="eyebrow">MODO RÁPIDO</span><h1>Cliente vendeu café</h1><p class="subtitle">Escolha o lote, informe quantas sacas vendeu e o valor. Ao salvar, o saldo baixa automaticamente e gera recibo.</p></div>
+  <div class="hero-note"><b>Venda parcial</b><p>Serve para vender 6 sacas, 6,24 sacas ou qualquer fração disponível no lote.</p></div>
+</div>
+<div class="card">
+  <form method="post" class="form" id="form-venda-rapida">
+    <div><label>Data</label><input type="date" name="data" value="{{ hoje }}" required></div>
+    <div class="span"><label>Buscar lote/cliente</label><input type="search" id="busca-lote" placeholder="Digite nome, lote ou tipo para filtrar"></div>
+    <div class="span"><label>Café/lote que será vendido</label><select name="compra_id" id="compra_id" required><option value="">Selecione o café em depósito</option>{% for l in lotes %}<option value="{{ l.id }}" data-text="{{ (l.pessoa_nome or '') ~ ' ' ~ (l.lote or '') ~ ' ' ~ (l.tipo_cafe or '') }}" data-saldo="{{ l.estoque_lote or 0 }}" data-tipo="{{ l.tipo_cafe or '' }}" data-cliente="{{ l.pessoa_nome or '-' }}" data-lote="{{ l.lote or ('Lote ' ~ l.id) }}">{{ l.pessoa_nome or '-' }} • {{ l.lote or ('Lote ' ~ l.id) }} • {{ l.tipo_cafe or '-' }} • saldo {{ l.estoque_lote|num }} sacas</option>{% endfor %}</select></div>
+    <div><label>Saldo disponível</label><input id="saldo-lote" readonly value="0 sacas"></div>
+    <div><label>Sacas vendidas agora</label><input type="number" step="0.01" name="quantidade_sacas" id="qtd-venda" required placeholder="Ex: 6.24"></div>
+    <div><label>Valor por saca</label><input type="number" step="0.01" name="valor_saca" id="valor-venda" required placeholder="Ex: 1300"></div>
+    <div><label>Total da venda</label><input id="total-venda" readonly value="R$ 0,00"></div>
+    <div><label>Pagamento ao cliente</label><select name="status_recebimento"><option value="A pagar ao cliente">A pagar ao cliente</option><option value="Pago ao cliente">Pago ao cliente</option></select></div>
+    <div><label>Forma de pagamento ao cliente</label><input name="forma_pagamento" placeholder="Pix, Sicoob, dinheiro..."></div>
+    <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: venda parcial feita hoje"></div>
+    <button class="btn">Salvar venda e gerar recibo</button>
+  </form>
+</div>
+<div class="quick"><a class="btn light" href="{{ url_for('modo_rapido') }}">Voltar ao Modo Rápido</a><a class="btn light" href="{{ url_for('depositos') }}">Ver cafés em depósito</a></div>
+<script>
+function brMoney(v){return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
+function atualizaVendaRapida(){
+  const sel=document.getElementById('compra_id');
+  const opt=sel.options[sel.selectedIndex];
+  const saldo=parseFloat(opt?.dataset?.saldo||'0')||0;
+  document.getElementById('saldo-lote').value=saldo.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' sacas';
+  const qtd=parseFloat((document.getElementById('qtd-venda').value||'0').replace(',','.'))||0;
+  const valor=parseFloat((document.getElementById('valor-venda').value||'0').replace(',','.'))||0;
+  document.getElementById('total-venda').value=brMoney(qtd*valor);
+}
+document.getElementById('compra_id').addEventListener('change', atualizaVendaRapida);
+document.getElementById('qtd-venda').addEventListener('input', atualizaVendaRapida);
+document.getElementById('valor-venda').addEventListener('input', atualizaVendaRapida);
+document.getElementById('busca-lote').addEventListener('input', function(){
+  const q=this.value.toLowerCase();
+  [...document.getElementById('compra_id').options].forEach((op,i)=>{op.hidden=i>0 && !(op.dataset.text||op.text).toLowerCase().includes(q);});
+});
+atualizaVendaRapida();
+</script>
+{% endblock %}

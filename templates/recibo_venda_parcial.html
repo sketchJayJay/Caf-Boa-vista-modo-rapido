@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Recibo de venda parcial</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="print">
+  <div class="receipt wide-receipt">
+    <div class="receipt-head">
+      <img src="{{ url_for('static', filename='logo_boavista.jpg') }}" alt="Logo Café Boa Vista">
+      <div>
+        <h1>RECIBO DE VENDA PARCIAL</h1>
+        <p class="receipt-company"><b>Café Boa Vista</b> • Comprador: Sebastião Lopes Filho</p>
+        <p class="receipt-company">Telefones: (33) 99970-7857 / (33) 98459-1051</p>
+        <p class="receipt-company">Grumarinho - próximo Neblina, Divino - MG</p>
+      </div>
+    </div>
+
+    <div class="grid metrics no-break">
+      <div class="metric"><small>Saldo antes</small><strong>{{ saldo_anterior|num }} sacas</strong></div>
+      <div class="metric"><small>Vendido agora</small><strong>{{ vendido_agora|num }} sacas</strong></div>
+      <div class="metric good"><small>Saldo após venda</small><strong>{{ saldo_depois|num }} sacas</strong></div>
+      <div class="metric"><small>Total da venda</small><strong>{{ venda.valor_total|money }}</strong></div>
+    </div>
+
+    <p><b>Cliente:</b> {{ venda.pessoa_nome or 'Sem cadastro' }}</p>
+    <p><b>CPF/CNPJ:</b> {{ venda.documento or '-' }}</p>
+    <p><b>Telefone:</b> {{ venda.telefone or venda.whatsapp or '-' }}</p>
+    <p><b>Lote:</b> {{ lote_nome }}</p>
+    <p><b>Tipo de café:</b> {{ tipo }}</p>
+    <p><b>Data da venda:</b> {{ venda.data }}</p>
+    <p><b>Preço vendido por saca:</b> {{ venda.valor_saca|money }}</p>
+    <p><b>Pagamento ao cliente:</b> {% if venda.status_recebimento in ['Pago ao cliente','Recebido'] %}Pago ao cliente{% else %}A pagar ao cliente{% endif %}</p>
+    <p><b>Forma de pagamento:</b> {{ venda.forma_pagamento or '-' }}</p>
+    <p><b>Observação:</b> {{ venda.observacao or '-' }}</p>
+
+    <hr>
+    <h2>Resumo do lote</h2>
+    <table>
+      <tr><th>Entrada original</th><th>Vendido antes</th><th>Vendido nesta venda</th><th>Saldo depois desta venda</th><th>Saldo atual do lote</th></tr>
+      <tr><td>{{ comprado|num }} sacas</td><td>{{ vendido_antes|num }} sacas</td><td><b>{{ vendido_agora|num }} sacas</b></td><td><b>{{ saldo_depois|num }} sacas</b></td><td>{{ restante_lote|num }} sacas</td></tr>
+    </table>
+
+    <hr>
+    <p><b>Total:</b> {{ vendido_agora|num }} sacas x {{ venda.valor_saca|money }} = <b>{{ venda.valor_total|money }}</b></p>
+    <p class="receipt-slogan">Servir bem e honestidade é nossa missão</p>
+    <div class="actions no-print"><button onclick="window.print()" class="btn">Imprimir / salvar PDF</button><a class="btn light" href="{{ whatsapp_link(texto_whatsapp) }}" target="_blank">Enviar WhatsApp</a>{% if venda.compra_id %}<a class="btn light" href="{{ url_for('historico_lote', compra_id=venda.compra_id) }}">Histórico do lote</a>{% endif %}</div>
+  </div>
+</body>
+</html>
