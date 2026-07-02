@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="balcao-wrap">
+  <div class="hero card balcao-hero">
+    <div>
+      <span class="eyebrow">BALCÃO RÁPIDO</span>
+      <h1>O que aconteceu agora?</h1>
+      <p class="subtitle">Escolha o cliente uma vez e lance prova, entrada de café, venda parcial ou consulta de saldo na mesma tela.</p>
+    </div>
+    <div class="hero-note">
+      <b>Feito para o dia corrido</b>
+      <p>Sem procurar função no menu. O resto do sistema continua guardado para quando precisar.</p>
+    </div>
+  </div>
+
+  <div class="card balcao-cliente">
+    <div class="section-title"><h2>1. Cliente do atendimento</h2><small>Selecione ou digite rápido</small></div>
+    <div class="form balcao-cliente-form">
+      <div class="span"><label>Buscar cliente cadastrado</label><input type="search" id="busca-cliente-balcao" placeholder="Digite o nome para filtrar"></div>
+      <div class="span"><label>Cliente cadastrado</label><select id="cliente-balcao"><option value="" data-nome="" data-whatsapp="" data-documento="">Cliente não cadastrado / usar nome rápido</option>{% for p in pessoas %}<option value="{{ p.id }}" data-nome="{{ p.nome }}" data-whatsapp="{{ p.whatsapp or p.telefone or '' }}" data-documento="{{ p.documento or '' }}">{{ p.nome }}{% if p.fazenda %} • {{ p.fazenda }}{% endif %}{% if p.documento %} • {{ p.documento }}{% endif %}</option>{% endfor %}</select></div>
+      <div><label>Nome rápido</label><input id="nome-rapido-balcao" placeholder="Ex: João da Fazenda"></div>
+      <div><label>WhatsApp</label><input id="whatsapp-rapido-balcao" placeholder="Opcional"></div>
+      <div><label>CPF/CNPJ</label><input id="documento-rapido-balcao" placeholder="Opcional"></div>
+      <div class="balcao-selected"><small>Atendimento atual</small><strong id="cliente-atual-label">Nenhum cliente selecionado</strong><span id="cliente-atual-extra">Digite ou selecione acima.</span></div>
+    </div>
+  </div>
+
+  <div class="balcao-tabs card">
+    <div class="balcao-tab-buttons">
+      <button type="button" class="tab-btn active" data-tab="tab-prova">☕ Prova</button>
+      <button type="button" class="tab-btn" data-tab="tab-deposito">📦 Entrada de café</button>
+      <button type="button" class="tab-btn" data-tab="tab-venda">💸 Venda parcial</button>
+      <button type="button" class="tab-btn" data-tab="tab-valor">💵 Valor que pegou</button>
+      <button type="button" class="tab-btn" data-tab="tab-saldo">🔎 Saldo</button>
+    </div>
+
+    <section class="tab-panel active" id="tab-prova">
+      <div class="section-title"><h2>2. Lançar prova</h2><small>Campos principais apenas</small></div>
+      <form method="post" action="{{ url_for('balcao_prova') }}" class="form prova-rapida balcao-copy-client">
+        <input type="hidden" name="pessoa_id"><input type="hidden" name="nome_rapido"><input type="hidden" name="whatsapp_rapido"><input type="hidden" name="documento_rapido">
+        <div><label>Data</label><input type="date" name="data" value="{{ hoje }}" required></div>
+        <div><label>Quantidade/sacas</label><input type="number" step="0.01" name="quantidade_sacas" placeholder="Ex: 26.24"></div>
+        <div><label>Bebida</label><input name="bebida" placeholder="Ex: Duro, Rio, com obs..."></div>
+        <div><label>Cata %</label><input name="cata" class="percent-auto" placeholder="Ex: 30"></div>
+        <div><label>Umidade</label><input name="umidade" placeholder="Ex: 12%"></div>
+        <div><label>Resultado</label><select name="aprovado"><option>Em análise</option><option>Aprovado</option><option>Reprovado</option></select></div>
+        <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: aguardando resposta, bebida com observação..."></div>
+        <button class="btn btn-balcao">Salvar prova</button>
+      </form>
+    </section>
+
+    <section class="tab-panel" id="tab-deposito">
+      <div class="section-title"><h2>2. Cliente deixou café em depósito</h2><small>Cria o lote e entra no saldo</small></div>
+      <form method="post" action="{{ url_for('balcao_deposito') }}" class="form calc-sacas balcao-copy-client">
+        <input type="hidden" name="pessoa_id"><input type="hidden" name="nome_rapido"><input type="hidden" name="whatsapp_rapido"><input type="hidden" name="documento_rapido">
+        <div><label>Data</label><input type="date" name="data" value="{{ hoje }}" required></div>
+        <div><label>Lote</label><input name="lote" placeholder="Ex: Lote 001"></div>
+        <div><label>Tipo de café</label><select name="tipo_cafe"><option value="">Selecione</option>{% for t in tipos_cafe %}<option>{{ t }}</option>{% endfor %}</select></div>
+        <div><label>Fazenda/origem</label><input name="origem_cafe" placeholder="Opcional"></div>
+        <div><label>Peso KG</label><input type="number" step="0.01" name="peso_kg" class="peso" placeholder="Ex: 1580"></div>
+        <div><label>KG por saca</label><input type="number" step="0.01" name="divisor_saca" class="divisor" value="60"></div>
+        <div><label>Ajuste</label><input type="number" step="0.01" name="ajuste_sacas" class="ajuste" value="0"></div>
+        <div><label>Sacas finais</label><input type="number" step="0.01" name="quantidade_sacas" class="sacas" placeholder="Calcula automático"></div>
+        <div><label>Preço referência</label><input type="number" step="0.01" name="valor_saca" value="0"><small class="hint">Pode deixar 0 se ainda não fez preço.</small></div>
+        <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: cliente deixou em depósito, sem preço fechado"></div>
+        <button class="btn btn-balcao">Salvar entrada de café</button>
+      </form>
+    </section>
+
+    <section class="tab-panel" id="tab-venda">
+      <div class="section-title"><h2>2. Cliente vendeu parte do café</h2><small>Baixa o saldo e gera recibo</small></div>
+      <form method="post" action="{{ url_for('balcao_venda') }}" class="form balcao-copy-client" id="form-venda-balcao">
+        <input type="hidden" name="pessoa_id"><input type="hidden" name="nome_rapido"><input type="hidden" name="whatsapp_rapido"><input type="hidden" name="documento_rapido">
+        <div><label>Data</label><input type="date" name="data" value="{{ hoje }}" required></div>
+        <div class="span"><label>Buscar café/lote</label><input type="search" id="busca-lote-balcao" placeholder="Digite lote, tipo ou nome do cliente"></div>
+        <div class="span"><label>Qual café está vendendo?</label><select name="compra_id" id="compra-balcao" required><option value="">Selecione o café em depósito</option>{% for l in lotes %}<option value="{{ l.id }}" data-pessoa="{{ l.pessoa_id or '' }}" data-text="{{ (l.pessoa_nome or '') ~ ' ' ~ (l.lote or '') ~ ' ' ~ (l.tipo_cafe or '') }}" data-saldo="{{ l.estoque_lote or 0 }}">{{ l.pessoa_nome or '-' }} • {{ l.lote or ('Lote ' ~ l.id) }} • {{ l.tipo_cafe or '-' }} • saldo {{ l.estoque_lote|num }} sacas</option>{% endfor %}</select></div>
+        <div><label>Saldo disponível</label><input id="saldo-venda-balcao" readonly value="0 sacas"></div>
+        <div><label>Sacas vendidas</label><input type="number" step="0.01" name="quantidade_sacas" id="qtd-venda-balcao" required placeholder="Ex: 6.24"></div>
+        <div><label>Valor por saca</label><input type="number" step="0.01" name="valor_saca" id="valor-venda-balcao" required placeholder="Ex: 1300"></div>
+        <div><label>Total da venda</label><input id="total-venda-balcao" readonly value="R$ 0,00"></div>
+        <div><label>Pagamento ao cliente</label><select name="status_recebimento"><option value="A pagar ao cliente">A pagar ao cliente</option><option value="Pago ao cliente">Pago ao cliente</option></select></div>
+        <div><label>Forma pagamento</label><input name="forma_pagamento" placeholder="Pix, Sicoob, dinheiro..."></div>
+        <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: venda parcial feita no balcão"></div>
+        <button class="btn btn-balcao">Salvar venda e abrir recibo</button>
+      </form>
+    </section>
+
+    <section class="tab-panel" id="tab-valor">
+      <div class="section-title"><h2>2. Cliente pegou dinheiro</h2><small>Juros calcula pela data</small></div>
+      <form method="post" action="{{ url_for('balcao_valor_pego') }}" class="form balcao-copy-client" id="form-valor-balcao">
+        <input type="hidden" name="pessoa_id"><input type="hidden" name="nome_rapido"><input type="hidden" name="whatsapp_rapido"><input type="hidden" name="documento_rapido">
+        <div><label>Data que pegou</label><input type="date" name="data" value="{{ hoje }}" required></div>
+        <div><label>Valor que pegou</label><input type="number" step="0.01" name="valor" id="valor-pego-balcao" placeholder="Ex: 800" required></div>
+        <div><label>Juros % ao mês</label><input type="number" step="0.01" name="taxa_juros" id="taxa-pego-balcao" value="3"></div>
+        <div><label>Status</label><select name="status"><option>Aberto</option><option>Pago</option></select></div>
+        <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: pix, dinheiro entregue, acerto parcial..."></div>
+        <label class="checkline"><input type="checkbox" name="lancar_financeiro" value="1"> Lançar no financeiro como saída</label>
+        <button class="btn btn-balcao">Salvar valor pego</button>
+      </form>
+    </section>
+
+    <section class="tab-panel" id="tab-saldo">
+      <div class="section-title"><h2>2. Consultar saldo do cliente</h2><small>Sem mexer em lançamento</small></div>
+      <div class="saldo-actions">
+        <button class="btn" type="button" id="btn-abrir-painel">Abrir painel do cliente</button>
+        <button class="btn light" type="button" id="btn-acerto-cliente">Fazer acerto</button>
+        <a class="btn light" href="{{ url_for('depositos') }}">Ver todos os cafés em depósito</a>
+      </div>
+      <p class="subtitle">Selecione um cliente cadastrado no topo para abrir o painel completo. Para nome rápido, salve primeiro uma prova ou entrada de café.</p>
+      <div class="card mini-saldo"><h2>Cafés em depósito disponíveis</h2><table id="tabela-lotes-balcao"><tr><th>Cliente</th><th>Lote</th><th>Tipo</th><th>Saldo</th><th>Ações</th></tr>{% for l in lotes %}<tr data-pessoa="{{ l.pessoa_id or '' }}" data-text="{{ (l.pessoa_nome or '') ~ ' ' ~ (l.lote or '') ~ ' ' ~ (l.tipo_cafe or '') }}"><td>{{ l.pessoa_nome or '-' }}</td><td>{{ l.lote or ('Lote ' ~ l.id) }}</td><td>{{ l.tipo_cafe or '-' }}</td><td><b>{{ l.estoque_lote|num }}</b> sacas</td><td><a class="mini" href="{{ url_for('historico_lote', compra_id=l.id) }}" target="_blank">Histórico</a><a class="mini" href="{{ url_for('editar_compra', compra_id=l.id) }}">Abrir</a></td></tr>{% endfor %}</table></div>
+    </section>
+  </div>
+
+  <div class="grid metrics balcao-resumo">
+    <div class="card metric"><small>Sacas em depósito</small><strong>{{ total_deposito|num }}</strong></div>
+    <div class="card metric"><small>Valor estimado</small><strong>{{ valor_deposito|money }}</strong></div>
+    <div class="card metric"><small>Provas hoje</small><strong>{{ provas_hoje|length }}</strong></div>
+    <div class="card metric"><small>Vendas hoje</small><strong>{{ vendas_hoje|length }}</strong></div>
+  </div>
+
+  <div class="card movimento-card">
+    <div class="section-title"><h2>Movimento de hoje</h2><small>{{ hoje }}</small></div>
+    <table>
+      <tr><th>Tipo</th><th>Cliente</th><th>Resumo</th><th>Ação</th></tr>
+      {% for p in provas_hoje %}<tr><td>Prova</td><td>{{ p.cliente_nome }}</td><td>{{ p.quantidade_sacas|num }} sacas • {{ p.bebida or '-' }} • Cata {{ p.cata or '-' }}</td><td><a class="mini" href="{{ url_for('comprovante_prova', prova_id=p.id) }}" target="_blank">Comprovante</a></td></tr>{% endfor %}
+      {% for c in compras_hoje %}<tr><td>Depósito</td><td>{{ c.pessoa_nome or '-' }}</td><td>{{ c.estoque_lote|num }} sacas restantes • {{ c.tipo_cafe or '-' }} • {{ c.lote or 'Lote ' ~ c.id }}</td><td><a class="mini" href="{{ url_for('editar_compra', compra_id=c.id) }}">Abrir</a></td></tr>{% endfor %}
+      {% for v in vendas_hoje %}<tr><td>Venda</td><td>{{ v.pessoa_nome or '-' }}</td><td>{{ v.quantidade_sacas|num }} sacas • {{ v.valor_total|money }} • {{ v.status_recebimento or '-' }}</td><td><a class="mini" href="{{ url_for('recibo_venda_parcial', venda_id=v.id) }}" target="_blank">Recibo</a></td></tr>{% endfor %}
+      {% for a in valores_hoje %}<tr><td>Valor pego</td><td>{{ a.pessoa_nome or '-' }}</td><td>{{ a.valor|money }} • juros {{ a.valor_juros|money }} • {{ a.status }}</td><td>{% if a.pessoa_id %}<a class="mini" href="{{ url_for('painel_cliente', pessoa_id=a.pessoa_id) }}">Cliente</a>{% endif %}</td></tr>{% endfor %}
+      {% if not provas_hoje and not compras_hoje and not vendas_hoje and not valores_hoje %}<tr><td colspan="4">Nada lançado hoje ainda.</td></tr>{% endif %}
+    </table>
+  </div>
+</div>
+
+<style>
+.balcao-wrap{max-width:1450px}.balcao-hero{border:2px solid #cbe8d1}.balcao-cliente{position:sticky;top:8px;z-index:20}.balcao-cliente-form{grid-template-columns:repeat(6,minmax(140px,1fr));align-items:end}.balcao-selected{background:#ecf8ef;border:1px solid #cfe6d3;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:4px}.balcao-selected strong{font-size:17px}.balcao-tab-buttons{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}.tab-btn{border:1px solid #d5e7d7;background:#f6fbf7;border-radius:16px;padding:14px 10px;font-weight:900;color:#15682a;cursor:pointer}.tab-btn.active{background:linear-gradient(135deg,var(--accent),#49b359);color:#fff;border-color:transparent;box-shadow:0 8px 18px rgba(31,141,58,.20)}.tab-panel{display:none}.tab-panel.active{display:block}.btn-balcao{font-size:16px;min-height:48px}.saldo-actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}.mini-saldo{box-shadow:none;background:#fff}.balcao-resumo{margin:18px 0}.movimento-card{margin-top:18px}.balcao-tabs .form{margin-bottom:0}.balcao-copy-client .checkline{align-self:end}@media(max-width:980px){.balcao-cliente{position:static}.balcao-cliente-form{grid-template-columns:1fr}.balcao-tab-buttons{grid-template-columns:1fr 1fr}.tab-btn{font-size:13px;padding:12px 8px}.balcao-tabs .form{grid-template-columns:1fr}.saldo-actions{display:grid}.saldo-actions .btn{width:100%;text-align:center}}
+</style>
+<script>
+const clienteSelect = document.getElementById('cliente-balcao');
+const nomeRapido = document.getElementById('nome-rapido-balcao');
+const whatsappRapido = document.getElementById('whatsapp-rapido-balcao');
+const documentoRapido = document.getElementById('documento-rapido-balcao');
+const labelAtual = document.getElementById('cliente-atual-label');
+const extraAtual = document.getElementById('cliente-atual-extra');
+function clienteAtual(){
+  const opt = clienteSelect.options[clienteSelect.selectedIndex];
+  const id = clienteSelect.value || '';
+  return {
+    id,
+    nome: id ? (opt.dataset.nome || opt.text || '') : (nomeRapido.value || ''),
+    whatsapp: id ? (opt.dataset.whatsapp || '') : (whatsappRapido.value || ''),
+    documento: id ? (opt.dataset.documento || '') : (documentoRapido.value || '')
+  };
+}
+function atualizaClienteBalcao(){
+  const c = clienteAtual();
+  labelAtual.textContent = c.nome ? c.nome : 'Nenhum cliente selecionado';
+  extraAtual.textContent = c.id ? 'Cliente cadastrado selecionado.' : (c.nome ? 'Nome rápido: será cadastrado automaticamente ao salvar.' : 'Digite ou selecione acima.');
+  document.querySelectorAll('.balcao-copy-client').forEach(form => {
+    const hId = form.querySelector('[name="pessoa_id"]'); if(hId) hId.value = c.id;
+    const hNome = form.querySelector('[name="nome_rapido"]'); if(hNome) hNome.value = c.nome;
+    const hWhats = form.querySelector('[name="whatsapp_rapido"]'); if(hWhats) hWhats.value = c.whatsapp;
+    const hDoc = form.querySelector('[name="documento_rapido"]'); if(hDoc) hDoc.value = c.documento;
+  });
+  filtraLotes();
+}
+['change','input'].forEach(ev=>{clienteSelect.addEventListener(ev, atualizaClienteBalcao); nomeRapido.addEventListener(ev, atualizaClienteBalcao); whatsappRapido.addEventListener(ev, atualizaClienteBalcao); documentoRapido.addEventListener(ev, atualizaClienteBalcao);});
+document.getElementById('busca-cliente-balcao').addEventListener('input', function(){
+  const q=this.value.toLowerCase();
+  [...clienteSelect.options].forEach((op,i)=>{op.hidden = i>0 && !op.text.toLowerCase().includes(q);});
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active'); document.getElementById(btn.dataset.tab).classList.add('active');
+}));
+
+function brMoney(v){return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
+function brNum(v){return (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});}
+function filtraLotes(){
+  const c = clienteAtual();
+  const q = (document.getElementById('busca-lote-balcao')?.value || '').toLowerCase();
+  const sel = document.getElementById('compra-balcao');
+  if(sel){
+    [...sel.options].forEach((op,i)=>{
+      if(i===0){op.hidden=false; return;}
+      const bateCliente = !c.id || op.dataset.pessoa === c.id;
+      const bateBusca = !q || (op.dataset.text||op.text).toLowerCase().includes(q);
+      op.hidden = !(bateCliente && bateBusca);
+    });
+    const escolhido = sel.options[sel.selectedIndex];
+    if(escolhido && escolhido.hidden){ sel.value=''; }
+  }
+  document.querySelectorAll('#tabela-lotes-balcao tr[data-pessoa]').forEach(tr=>{
+    const bateCliente = !c.id || tr.dataset.pessoa === c.id;
+    const bateBusca = !q || (tr.dataset.text||tr.textContent).toLowerCase().includes(q);
+    tr.style.display = (bateCliente && bateBusca) ? '' : 'none';
+  });
+  atualizaVendaBalcao();
+}
+function atualizaVendaBalcao(){
+  const sel=document.getElementById('compra-balcao'); if(!sel) return;
+  const opt=sel.options[sel.selectedIndex];
+  const saldo=parseFloat(opt?.dataset?.saldo||'0')||0;
+  document.getElementById('saldo-venda-balcao').value = brNum(saldo)+' sacas';
+  const qtd=parseFloat((document.getElementById('qtd-venda-balcao').value||'0').replace(',','.'))||0;
+  const valor=parseFloat((document.getElementById('valor-venda-balcao').value||'0').replace(',','.'))||0;
+  document.getElementById('total-venda-balcao').value = brMoney(qtd*valor);
+}
+['compra-balcao','qtd-venda-balcao','valor-venda-balcao','busca-lote-balcao'].forEach(id=>{const el=document.getElementById(id); if(el){el.addEventListener('input',filtraLotes); el.addEventListener('change',filtraLotes);}});
+
+document.querySelectorAll('.percent-auto').forEach(el=>el.addEventListener('blur',()=>{let v=(el.value||'').trim(); if(v && !v.includes('%') && !isNaN(Number(v.replace(',','.')))){el.value=v.replace('.', ',')+'%';}}));
+document.getElementById('btn-abrir-painel').addEventListener('click',()=>{const c=clienteAtual(); if(!c.id){alert('Selecione um cliente cadastrado no topo.'); return;} window.location.href='/clientes/'+c.id;});
+document.getElementById('btn-acerto-cliente').addEventListener('click',()=>{const c=clienteAtual(); if(!c.id){alert('Selecione um cliente cadastrado no topo.'); return;} window.open('/clientes/'+c.id+'/acerto','_blank');});
+
+document.querySelectorAll('form.balcao-copy-client').forEach(form=>form.addEventListener('submit', function(e){atualizaClienteBalcao(); const c=clienteAtual(); if(!c.id && !c.nome.trim()){e.preventDefault(); alert('Selecione ou digite o nome do cliente antes de salvar.');}}));
+atualizaClienteBalcao();
+</script>
+{% endblock %}

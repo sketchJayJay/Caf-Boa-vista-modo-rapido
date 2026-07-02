@@ -498,9 +498,15 @@ def modo_rapido():
                               LEFT JOIN pessoas p ON p.id=a.pessoa_id
                               WHERE a.data=? ORDER BY a.id DESC LIMIT 8""", (hoje,))
     deposito = fetchone("SELECT COALESCE(SUM(({expr})),0) sacas, COALESCE(SUM(({expr}) * c.valor_saca),0) valor FROM compras c".format(expr=lote_estoque_expr()))
-    return render_template('modo_rapido.html', hoje=hoje, provas_hoje=provas_hoje, compras_hoje=compras_hoje,
+    pessoas_rows = get_pessoas_choices("")
+    lotes = fetchall(f"""SELECT c.*, p.nome pessoa_nome, p.whatsapp, ({lote_estoque_expr()}) estoque_lote
+                        FROM compras c LEFT JOIN pessoas p ON p.id=c.pessoa_id
+                        WHERE ({lote_estoque_expr()}) > 0.0001
+                        ORDER BY p.nome COLLATE NOCASE, c.data DESC, c.id DESC""")
+    return render_template('balcao_rapido.html', hoje=hoje, provas_hoje=provas_hoje, compras_hoje=compras_hoje,
                            vendas_hoje=vendas_hoje, valores_hoje=valores_hoje,
-                           total_deposito=deposito['sacas'], valor_deposito=deposito['valor'])
+                           total_deposito=deposito['sacas'], valor_deposito=deposito['valor'],
+                           pessoas=pessoas_rows, lotes=lotes, tipos_cafe=TIPOS_CAFE)
 
 
 def achar_ou_criar_pessoa_rapida(nome, whatsapp='', documento=''):
@@ -519,6 +525,135 @@ def achar_ou_criar_pessoa_rapida(nome, whatsapp='', documento=''):
     con.commit(); con.close()
     log_acao('Cliente rápido criado', 'pessoa', pessoa_id, nome)
     return pessoa_id
+
+
+def pessoa_id_balcao():
+    """Usa cliente selecionado no balcão ou cria cadastro rápido pelo nome digitado."""
+    pessoa_id = request.form.get('pessoa_id') or None
+    if pessoa_id:
+        existe = fetchone("SELECT id FROM pessoas WHERE id=?", (pessoa_id,))
+        if existe:
+            return pessoa_id
+    return achar_ou_criar_pessoa_rapida(request.form.get('nome_rapido'), request.form.get('whatsapp_rapido'), request.form.get('documento_rapido'))
+
+
+@app.route('/balcao/prova', methods=['POST'])
+def balcao_prova():
+    pessoa_id = pessoa_id_balcao()
+    nome_rapido = (request.form.get('nome_rapido') or '').strip()
+    if not pessoa_id and not nome_rapido:
+        flash('Selecione ou digite o nome do cliente para lançar a prova.')
+        return redirect(url_for('modo_rapido'))
+    qtd = fnum('quantidade_sacas')
+    bebida = (request.form.get('bebida') or '').strip()
+    cata = normalizar_cata(request.form.get('cata'))
+    umidade = (request.form.get('umidade') or '').strip()
+    obs = (request.form.get('observacao') or '').strip()
+    if not (qtd or bebida or cata or umidade or obs):
+        flash('Preencha pelo menos uma informação da prova antes de salvar.')
+        return redirect(url_for('modo_rapido'))
+    con = db(); cur = con.cursor()
+    cur.execute("""INSERT INTO provas (pessoa_id,data,cata,nome_avulso,quantidade,quantidade_sacas,bebida,umidade,aprovado,observacao)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (pessoa_id, request.form.get('data') or today(), cata, nome_rapido if not pessoa_id else '', qtd, qtd, bebida, umidade, request.form.get('aprovado') or 'Em análise', obs))
+    prova_id = cur.lastrowid
+    con.commit(); con.close()
+    log_acao('Prova rápida lançada no balcão', 'prova', prova_id, f'{br_num(qtd)} sacas - {bebida}')
+    flash('Prova salva. Já ficou no histórico do cliente.')
+    return redirect(url_for('modo_rapido'))
+
+
+@app.route('/balcao/deposito', methods=['POST'])
+def balcao_deposito():
+    pessoa_id = pessoa_id_balcao()
+    if not pessoa_id:
+        flash('Selecione ou digite o nome do cliente para lançar o café em depósito.')
+        return redirect(url_for('modo_rapido'))
+    peso, divisor, ajuste, informada = fnum('peso_kg'), fnum('divisor_saca') or 60, fnum('ajuste_sacas'), fnum('quantidade_sacas')
+    qtd = calc_sacas(peso, divisor, ajuste, informada)
+    valor_saca = fnum('valor_saca')
+    total = qtd * valor_saca
+    if qtd <= 0:
+        flash('Informe o peso ou a quantidade de sacas para lançar o café em depósito.')
+        return redirect(url_for('modo_rapido'))
+    con = db(); cur = con.cursor()
+    cur.execute("""INSERT INTO compras (pessoa_id,data,lote,tipo_cafe,quantidade_sacas,peso_kg,divisor_saca,ajuste_sacas,valor_saca,valor_total,status_pagamento,forma_pagamento,frete,outras_despesas,origem_cafe,status_lote,observacao)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pessoa_id, request.form.get('data') or today(), request.form.get('lote'), request.form.get('tipo_cafe'), qtd, peso, divisor, ajuste, valor_saca, total, 'Pendente', '', 0, 0, request.form.get('origem_cafe'), 'Em estoque', request.form.get('observacao')))
+    compra_id = cur.lastrowid
+    lote = request.form.get('lote') or f'Lote {compra_id}'
+    cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                (request.form.get('data') or today(), 'Saída', f'Café em depósito/compra - {lote}', 'Compra de café', total, 'Pendente', f'compra:{compra_id}'))
+    con.commit(); con.close()
+    update_compra_status(compra_id)
+    log_acao('Café em depósito lançado pelo balcão', 'compra', compra_id, f'{lote} - {br_num(qtd)} sacas')
+    flash(f'Café em depósito lançado: {br_num(qtd)} sacas. Já aparece no saldo.')
+    return redirect(url_for('modo_rapido'))
+
+
+@app.route('/balcao/venda', methods=['POST'])
+def balcao_venda():
+    compra_id = request.form.get('compra_id') or None
+    if not compra_id:
+        flash('Escolha o lote/café que o cliente está vendendo.')
+        return redirect(url_for('modo_rapido'))
+    compra = fetchone("SELECT c.*, p.nome pessoa_nome FROM compras c LEFT JOIN pessoas p ON p.id=c.pessoa_id WHERE c.id=?", (compra_id,))
+    if not compra:
+        flash('Lote não encontrado.')
+        return redirect(url_for('modo_rapido'))
+    qtd, valor_saca = fnum('quantidade_sacas'), fnum('valor_saca')
+    estoque_row = fetchone(f"SELECT ({lote_estoque_expr()}) estoque FROM compras c WHERE c.id=?", (compra_id,))
+    estoque_atual = float(estoque_row['estoque'] or 0) if estoque_row else 0
+    if qtd <= 0:
+        flash('Informe quantas sacas o cliente vendeu.')
+        return redirect(url_for('modo_rapido'))
+    if qtd > estoque_atual + 0.0001:
+        flash(f'Não dá para vender {br_num(qtd)} sacas. Esse lote tem apenas {br_num(estoque_atual)} sacas disponíveis.')
+        return redirect(url_for('modo_rapido'))
+    subtotal = qtd * valor_saca
+    custo_saca = float(compra['valor_saca'] or 0)
+    lucro = (valor_saca - custo_saca) * qtd
+    status_venda = request.form.get('status_recebimento') or 'A pagar ao cliente'
+    status_financeiro = 'Pago' if status_venda in ('Recebido','Pago ao cliente') else 'Pendente'
+    con = db(); cur = con.cursor()
+    cur.execute("""INSERT INTO vendas (pessoa_id,compra_id,data,lote,tipo_cafe,quantidade_sacas,valor_saca,subtotal_cafe,juros_percentual,meses_atraso,valor_juros,valor_total,custo_saca,lucro_total,status_recebimento,forma_pagamento,observacao)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (compra['pessoa_id'], compra_id, request.form.get('data') or today(), compra['lote'], compra['tipo_cafe'], qtd, valor_saca, subtotal, 0, 0, 0, subtotal, custo_saca, lucro, status_venda, request.form.get('forma_pagamento'), request.form.get('observacao')))
+    venda_id = cur.lastrowid
+    cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                (request.form.get('data') or today(), 'Saída', f"Pagamento de venda de café ao cliente - {compra['lote'] or venda_id}", 'Pagamento ao cliente', subtotal, status_financeiro, f'venda:{venda_id}'))
+    con.commit(); con.close()
+    update_compra_status(compra_id)
+    log_acao('Venda parcial lançada pelo balcão', 'venda', venda_id, f"{compra['pessoa_nome'] or ''} - {br_num(qtd)} sacas")
+    flash('Venda salva. Recibo aberto para conferir ou enviar.')
+    return redirect(url_for('recibo_venda_parcial', venda_id=venda_id))
+
+
+@app.route('/balcao/valor-pego', methods=['POST'])
+def balcao_valor_pego():
+    pessoa_id = pessoa_id_balcao()
+    if not pessoa_id:
+        flash('Selecione ou digite o nome do cliente para lançar o valor que ele pegou.')
+        return redirect(url_for('modo_rapido'))
+    pessoa = fetchone("SELECT * FROM pessoas WHERE id=?", (pessoa_id,))
+    valor = fnum('valor')
+    taxa = fnum('taxa_juros')
+    data = request.form.get('data') or today()
+    if valor <= 0:
+        flash('Informe o valor que o cliente pegou.')
+        return redirect(url_for('modo_rapido'))
+    meses, juros, total = calcular_adiantamento(valor, taxa, data_inicio=data)
+    con = db(); cur = con.cursor()
+    cur.execute("""INSERT INTO adiantamentos (pessoa_id,data,valor,taxa_juros,meses_atraso,valor_juros,valor_total,observacao,status,criado_em)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""", (pessoa_id, data, valor, taxa, meses, juros, total, request.form.get('observacao') or '', request.form.get('status') or 'Aberto', datetime.now().isoformat(timespec='seconds')))
+    aid = cur.lastrowid
+    if request.form.get('lancar_financeiro') == '1':
+        cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                    (data, 'Saída', f"Valor pego por {pessoa['nome']} - adiantamento #{aid}", 'Adiantamento ao cliente', valor, 'Pago', f'adiantamento:{aid}'))
+    con.commit(); con.close()
+    log_acao('Valor pego lançado pelo balcão', 'adiantamento', aid, f'{pessoa["nome"]} - {br_money(valor)}')
+    flash('Valor que o cliente pegou foi salvo e já entra no acerto.')
+    return redirect(url_for('modo_rapido'))
 
 
 @app.route('/rapido/deposito', methods=['GET','POST'])
