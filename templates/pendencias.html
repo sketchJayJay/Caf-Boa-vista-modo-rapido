@@ -1,0 +1,18 @@
+{% extends 'base.html' %}{% block content %}
+<div class="hero card"><div><span class="eyebrow">AUTOMAÇÃO</span><h1>Pendências do dia</h1><p class="subtitle">O sistema separa o que precisa de atenção para o Ruan não ter que procurar tela por tela.</p></div><div class="hero-note"><b>{{ hoje }}</b><p>Abra uma pendência e resolva direto.</p></div></div>
+<div class="grid metrics">
+  <a class="card metric {% if provas_analise %}warn{% endif %}" href="{{ url_for('cafes_analise') }}"><small>Provas aguardando resultado</small><strong>{{ provas_analise }}</strong></a>
+  <a class="card metric {% if vendas_pendentes %}warn{% endif %}" href="{{ url_for('vendas') }}"><small>Pagamentos pendentes</small><strong>{{ vendas_pendentes }}</strong><span>{{ valor_pendente|money }}</span></a>
+  <div class="card metric"><small>Valores pegos em aberto</small><strong>{{ adiantamentos_abertos }}</strong><span>Juros atuais: {{ juros_atualizados|money }}</span></div>
+  <div class="card metric {% if backup_hoje %}good{% else %}warn{% endif %}"><small>Backup automático</small><strong>{% if backup_hoje %}Feito hoje{% else %}Pendente{% endif %}</strong><span>{{ ultimo_backup or 'Sem backup' }}</span></div>
+</div>
+<div class="row">
+  <div class="card"><h2>Ações rápidas</h2><div class="quick"><a class="btn" href="{{ url_for('modo_rapido') }}">Abrir Balcão Rápido</a><a class="btn light" href="{{ url_for('fechamento_dia') }}" target="_blank">Fechamento de hoje</a><form method="post" action="{{ url_for('backup_automatico_agora') }}"><button class="btn light">Criar backup agora</button></form></div></div>
+  <div class="card"><h2>Como funciona</h2><p>As provas em análise, pagamentos a clientes, valores com juros e lotes parados aparecem automaticamente aqui. Quando o lançamento muda, esta tela muda junto.</p></div>
+</div>
+<div class="card"><div class="section-title"><h2>Lotes sem movimento há 20 dias</h2><small>{{ lotes_parados|length }} lote(s)</small></div>
+<table><tr><th>Cliente</th><th>Lote</th><th>Tipo</th><th>Saldo</th><th>Última movimentação</th><th>Ação</th></tr>
+{% for l in lotes_parados %}<tr><td>{{ l.pessoa_nome or '-' }}</td><td>{{ l.lote or ('Lote ' ~ l.id) }}</td><td>{{ l.tipo_cafe or '-' }}</td><td><b>{{ l.estoque_lote|num }}</b> sacas</td><td>{{ l.ultima_movimentacao }}</td><td><a class="mini" href="{{ url_for('editar_compra', compra_id=l.id) }}">Abrir lote</a><a class="mini" href="{{ url_for('historico_lote', compra_id=l.id) }}" target="_blank">Histórico</a></td></tr>{% else %}<tr><td colspan="6">Nenhum lote parado há mais de 20 dias.</td></tr>{% endfor %}
+</table></div>
+<style>.metrics a{text-decoration:none;color:inherit}.metric span{display:block;margin-top:5px;color:var(--muted);font-size:13px}</style>
+{% endblock %}

@@ -1,13 +1,15 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, Response, send_file
-import sqlite3, csv, io, shutil, urllib.parse
+from flask import Flask, render_template, request, redirect, url_for, flash, Response, send_file, jsonify
+import sqlite3, csv, io, shutil, urllib.parse, os
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 app = Flask(__name__)
-app.secret_key = "controle-cafe-pro"
-DB_DIR = Path("data")
-DB_DIR.mkdir(exist_ok=True)
+app.secret_key = os.getenv("SECRET_KEY", "controle-cafe-pro")
+DB_DIR = Path(os.getenv("DATA_DIR", "data"))
+DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "controle_cafe.sqlite3"
+BACKUP_DIR = DB_DIR / "backups_automaticos"
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 TIPOS_CAFE = ["Duro", "Duro riado", "Duro riado Rio", "Riado rio", "Rio", "Escolha"]
 
@@ -225,6 +227,57 @@ def fetchone(query, params=()):
     con = db(); row = con.execute(query, params).fetchone(); con.close(); return row
 
 
+def criar_backup_automatico(forcar=False, motivo='Backup automático diário'):
+    """Cria uma cópia consistente do SQLite dentro do volume persistente.
+    Mantém 30 arquivos e evita repetir backup no mesmo dia, salvo quando forçado.
+    """
+    if not DB_PATH.exists():
+        return None
+    hoje_tag = date.today().strftime('%Y%m%d')
+    existentes_hoje = sorted(BACKUP_DIR.glob(f'auto_{hoje_tag}_*.sqlite3'))
+    if existentes_hoje and not forcar:
+        return existentes_hoje[-1]
+    destino = BACKUP_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.sqlite3"
+    origem = sqlite3.connect(DB_PATH)
+    copia = sqlite3.connect(destino)
+    try:
+        origem.backup(copia)
+    finally:
+        copia.close(); origem.close()
+    arquivos = sorted(BACKUP_DIR.glob('auto_*.sqlite3'), key=lambda x: x.stat().st_mtime, reverse=True)
+    for antigo in arquivos[30:]:
+        try: antigo.unlink()
+        except OSError: pass
+    try:
+        log_acao(motivo, 'sistema', None, destino.name)
+    except Exception:
+        pass
+    return destino
+
+
+def ultimo_backup_automatico():
+    arquivos = sorted(BACKUP_DIR.glob('auto_*.sqlite3'), key=lambda x: x.stat().st_mtime, reverse=True)
+    return arquivos[0] if arquivos else None
+
+
+@app.before_request
+def garantir_backup_diario():
+    if request.endpoint and request.endpoint != 'static':
+        try:
+            criar_backup_automatico(False)
+        except Exception as exc:
+            print('Falha no backup automático:', exc)
+
+
+@app.after_request
+def backup_apos_alteracao(response):
+    if request.method == 'POST' and response.status_code < 400 and request.endpoint not in ('backup', 'backup_automatico_agora'):
+        try:
+            criar_backup_automatico(True, 'Backup automático após alteração')
+        except Exception as exc:
+            print('Falha no backup após alteração:', exc)
+    return response
+
 
 
 def get_pessoas_choices(query=""):
@@ -276,18 +329,30 @@ def get_acerto_data(pessoa_id):
         return None
     atualizar_adiantamentos_abertos(pessoa_id)
     vendas_rows = fetchall("SELECT * FROM vendas WHERE pessoa_id=? AND status_recebimento IN ('Pendente','A pagar ao cliente') ORDER BY data DESC, id DESC", (pessoa_id,))
-    adiantamentos_rows = [adiantamento_com_juros_atual(a) for a in fetchall("SELECT * FROM adiantamentos WHERE pessoa_id=? AND UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA') ORDER BY data DESC, id DESC", (pessoa_id,))]
+    adiantamentos_rows = [adiantamento_com_juros_atual(a) for a in fetchall("SELECT * FROM adiantamentos WHERE pessoa_id=? AND UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA','DESCONTADO NO ACERTO','DESCONTADA NO ACERTO') ORDER BY data DESC, id DESC", (pessoa_id,))]
     estoque_tipo = fetchall(f"""SELECT COALESCE(c.tipo_cafe,'Sem tipo') tipo, SUM({lote_estoque_expr()}) sacas, SUM(({lote_estoque_expr()}) * c.valor_saca) valor
         FROM compras c WHERE c.pessoa_id=? GROUP BY COALESCE(c.tipo_cafe,'Sem tipo') ORDER BY tipo""", (pessoa_id,))
     saldo_vendas = sum(float(v['valor_total'] or 0) for v in vendas_rows)
     adiant_sem = sum(float(a['valor'] or 0) for a in adiantamentos_rows)
     adiant_juros = sum(float(a['valor_juros'] or 0) for a in adiantamentos_rows)
     adiant_total = sum(float(a['valor_total'] or 0) for a in adiantamentos_rows)
-    total = saldo_vendas + adiant_total
-    texto = f"""Café Boa Vista\nAcerto do cliente\n\nCliente: {pessoa['nome']}\nVendas pendentes: {br_money(saldo_vendas)}\nValores que pegou: {br_money(adiant_sem)}\nJuros dos valores: {br_money(adiant_juros)}\nTotal para acerto: {br_money(total)}"""
+    saldo_liquido = saldo_vendas - adiant_total
+    total = max(0.0, saldo_liquido)
+    saldo_devedor = max(0.0, -saldo_liquido)
+    texto = f"""Café Boa Vista
+Acerto do cliente
+
+Cliente: {pessoa['nome']}
+Vendas pendentes: {br_money(saldo_vendas)}
+Valores que pegou: {br_money(adiant_sem)}
+Juros dos valores: {br_money(adiant_juros)}
+Total a descontar: {br_money(adiant_total)}
+Líquido a pagar ao cliente: {br_money(total)}
+Saldo devedor do cliente: {br_money(saldo_devedor)}"""
     return dict(pessoa=pessoa, vendas=vendas_rows, adiantamentos=adiantamentos_rows, estoque_tipo=estoque_tipo,
                 saldo_vendas=saldo_vendas, adiant_sem=adiant_sem, adiant_juros=adiant_juros,
-                adiant_total=adiant_total, total=total, texto_whatsapp=texto, hoje=today())
+                adiant_total=adiant_total, total=total, saldo_liquido=saldo_liquido,
+                saldo_devedor=saldo_devedor, texto_whatsapp=texto, hoje=today())
 
 
 def fnum(name):
@@ -332,7 +397,7 @@ def calcular_juros_simples(valor, taxa, meses):
 
 def adiantamento_em_aberto(row):
     status = str(row['status'] or 'Aberto').strip().lower()
-    return status not in ('pago', 'paga', 'quitado', 'quitada')
+    return status not in ('pago', 'paga', 'quitado', 'quitada', 'descontado no acerto', 'descontada no acerto')
 
 
 def adiantamento_com_juros_atual(row):
@@ -355,9 +420,9 @@ def atualizar_adiantamentos_abertos(pessoa_id=None):
     """
     try:
         if pessoa_id:
-            rows = fetchall("SELECT * FROM adiantamentos WHERE pessoa_id=? AND UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA')", (pessoa_id,))
+            rows = fetchall("SELECT * FROM adiantamentos WHERE pessoa_id=? AND UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA','DESCONTADO NO ACERTO','DESCONTADA NO ACERTO')", (pessoa_id,))
         else:
-            rows = fetchall("SELECT * FROM adiantamentos WHERE UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA')")
+            rows = fetchall("SELECT * FROM adiantamentos WHERE UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN ('PAGO','PAGA','QUITADO','QUITADA','DESCONTADO NO ACERTO','DESCONTADA NO ACERTO')")
         if not rows:
             return
         con = db()
@@ -468,7 +533,113 @@ def update_compra_status(compra_id):
 
 def update_all_status():
     ids = [r['id'] for r in fetchall("SELECT id FROM compras")]
-    for i in ids: update_compra_status(i)
+    for i in ids:
+        update_compra_status(i)
+
+
+def resumo_cliente_automatico(pessoa_id):
+    pessoa = fetchone("SELECT * FROM pessoas WHERE id=?", (pessoa_id,))
+    if not pessoa:
+        return None
+    atualizar_adiantamentos_abertos(pessoa_id)
+    lotes = fetchall(f"""SELECT c.id,c.data,c.lote,c.tipo_cafe,c.quantidade_sacas,c.valor_saca,
+        ({lote_estoque_expr()}) estoque_lote,
+        COALESCE((SELECT SUM(v.quantidade_sacas) FROM vendas v WHERE v.compra_id=c.id),0) vendido
+        FROM compras c WHERE c.pessoa_id=? AND ({lote_estoque_expr()}) > 0.0001
+        ORDER BY c.data DESC,c.id DESC""", (pessoa_id,))
+    ultima_prova = fetchone("SELECT * FROM provas WHERE pessoa_id=? ORDER BY data DESC,id DESC LIMIT 1", (pessoa_id,))
+    contas = fetchall("SELECT * FROM contas_cliente WHERE pessoa_id=? ORDER BY id DESC LIMIT 10", (pessoa_id,))
+    vendas_pendentes = fetchall("""SELECT * FROM vendas WHERE pessoa_id=?
+        AND status_recebimento IN ('Pendente','A pagar ao cliente') ORDER BY data DESC,id DESC""", (pessoa_id,))
+    adiantamentos = [adiantamento_com_juros_atual(a) for a in fetchall("""SELECT * FROM adiantamentos WHERE pessoa_id=?
+        AND UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN
+        ('PAGO','PAGA','QUITADO','QUITADA','DESCONTADO NO ACERTO','DESCONTADA NO ACERTO')
+        ORDER BY data DESC,id DESC""", (pessoa_id,))]
+    sacas = sum(max(0.0, float(l['estoque_lote'] or 0)) for l in lotes)
+    saldo_vendas = sum(float(v['valor_total'] or 0) for v in vendas_pendentes)
+    adiant_principal = sum(float(a.get('valor') or 0) for a in adiantamentos)
+    juros = sum(float(a.get('valor_juros') or 0) for a in adiantamentos)
+    total_desconto = sum(float(a.get('valor_total') or 0) for a in adiantamentos)
+    saldo_liquido = saldo_vendas - total_desconto
+    return {
+        'pessoa': dict(pessoa),
+        'lotes': [dict(x) for x in lotes],
+        'ultima_prova': dict(ultima_prova) if ultima_prova else None,
+        'contas': [dict(x) for x in contas],
+        'conta_principal': dict(contas[0]) if contas else None,
+        'sacas_deposito': sacas,
+        'vendas_pendentes': saldo_vendas,
+        'valores_pegos': adiant_principal,
+        'juros': juros,
+        'total_desconto': total_desconto,
+        'liquido_a_pagar': max(0.0, saldo_liquido),
+        'saldo_devedor': max(0.0, -saldo_liquido),
+        'qtd_vendas_pendentes': len(vendas_pendentes),
+        'qtd_adiantamentos': len(adiantamentos)
+    }
+
+
+def pendencias_automaticas():
+    atualizar_adiantamentos_abertos()
+    provas_analise = fetchone("SELECT COUNT(*) q FROM provas WHERE COALESCE(aprovado,'Em análise')='Em análise'")['q']
+    vendas = fetchone("""SELECT COUNT(*) q,COALESCE(SUM(valor_total),0) valor FROM vendas
+        WHERE status_recebimento IN ('Pendente','A pagar ao cliente')""")
+    adiant_rows = [adiantamento_com_juros_atual(a) for a in fetchall("""SELECT * FROM adiantamentos
+        WHERE UPPER(TRIM(COALESCE(status,'Aberto'))) NOT IN
+        ('PAGO','PAGA','QUITADO','QUITADA','DESCONTADO NO ACERTO','DESCONTADA NO ACERTO')""")]
+    limite = (date.today() - timedelta(days=20)).isoformat()
+    lotes_parados = fetchall(f"""SELECT c.id,c.data,c.lote,c.tipo_cafe,p.nome pessoa_nome,
+        ({lote_estoque_expr()}) estoque_lote,
+        COALESCE((SELECT MAX(v.data) FROM vendas v WHERE v.compra_id=c.id),c.data) ultima_movimentacao
+        FROM compras c LEFT JOIN pessoas p ON p.id=c.pessoa_id
+        WHERE ({lote_estoque_expr()}) > 0.0001
+        AND COALESCE((SELECT MAX(v.data) FROM vendas v WHERE v.compra_id=c.id),c.data) <= ?
+        ORDER BY ultima_movimentacao ASC LIMIT 50""", (limite,))
+    ultimo = ultimo_backup_automatico()
+    backup_hoje = bool(ultimo and datetime.fromtimestamp(ultimo.stat().st_mtime).date() == date.today())
+    return {
+        'provas_analise': int(provas_analise or 0),
+        'vendas_pendentes': int(vendas['q'] or 0),
+        'valor_pendente': float(vendas['valor'] or 0),
+        'adiantamentos_abertos': len(adiant_rows),
+        'juros_atualizados': sum(float(a.get('valor_juros') or 0) for a in adiant_rows),
+        'lotes_parados': [dict(x) for x in lotes_parados],
+        'backup_hoje': backup_hoje,
+        'ultimo_backup': ultimo.name if ultimo else None
+    }
+
+
+def fechamento_do_dia(data_ref):
+    provas = fetchall("""SELECT pr.*,COALESCE(p.nome,pr.nome_avulso,pr.nome_cliente,'-') cliente_nome
+        FROM provas pr LEFT JOIN pessoas p ON p.id=pr.pessoa_id WHERE pr.data=? ORDER BY pr.id""", (data_ref,))
+    compras = fetchall("""SELECT c.*,p.nome pessoa_nome FROM compras c LEFT JOIN pessoas p ON p.id=c.pessoa_id
+        WHERE c.data=? ORDER BY c.id""", (data_ref,))
+    vendas = fetchall("""SELECT v.*,p.nome pessoa_nome FROM vendas v LEFT JOIN pessoas p ON p.id=v.pessoa_id
+        WHERE v.data=? ORDER BY v.id""", (data_ref,))
+    adiantamentos = fetchall("""SELECT a.*,p.nome pessoa_nome FROM adiantamentos a LEFT JOIN pessoas p ON p.id=a.pessoa_id
+        WHERE a.data=? ORDER BY a.id""", (data_ref,))
+    financeiro = fetchall("SELECT * FROM financeiro WHERE data=? ORDER BY id", (data_ref,))
+    total_sacas_entrada = sum(float(x['quantidade_sacas'] or 0) for x in compras)
+    total_sacas_venda = sum(float(x['quantidade_sacas'] or 0) for x in vendas)
+    total_vendas = sum(float(x['valor_total'] or 0) for x in vendas)
+    total_adiantado = sum(float(x['valor'] or 0) for x in adiantamentos)
+    entradas = sum(float(x['valor'] or 0) for x in financeiro if x['tipo']=='Entrada' and x['status']=='Pago')
+    saidas = sum(float(x['valor'] or 0) for x in financeiro if x['tipo']=='Saída' and x['status']=='Pago')
+    texto = f"""Café Boa Vista - Fechamento de {data_ref}
+Provas: {len(provas)}
+Café em depósito: {br_num(total_sacas_entrada)} sacas
+Vendas: {br_num(total_sacas_venda)} sacas / {br_money(total_vendas)}
+Valores que clientes pegaram: {br_money(total_adiantado)}
+Entradas pagas: {br_money(entradas)}
+Saídas pagas: {br_money(saidas)}"""
+    return dict(
+        data_ref=data_ref, provas=provas, compras=compras, vendas=vendas,
+        adiantamentos=adiantamentos, financeiro=financeiro,
+        total_sacas_entrada=total_sacas_entrada, total_sacas_venda=total_sacas_venda,
+        total_vendas=total_vendas, total_adiantado=total_adiantado,
+        entradas=entradas, saidas=saidas, saldo_caixa=entradas-saidas,
+        texto_whatsapp=texto
+    )
 
 
 # Login removido temporariamente: o sistema entra direto enquanto finalizamos as regras de uso.
@@ -503,10 +674,42 @@ def modo_rapido():
                         FROM compras c LEFT JOIN pessoas p ON p.id=c.pessoa_id
                         WHERE ({lote_estoque_expr()}) > 0.0001
                         ORDER BY p.nome COLLATE NOCASE, c.data DESC, c.id DESC""")
+    pendencias = pendencias_automaticas()
+    ultimo_backup = ultimo_backup_automatico()
     return render_template('balcao_rapido.html', hoje=hoje, provas_hoje=provas_hoje, compras_hoje=compras_hoje,
                            vendas_hoje=vendas_hoje, valores_hoje=valores_hoje,
                            total_deposito=deposito['sacas'], valor_deposito=deposito['valor'],
-                           pessoas=pessoas_rows, lotes=lotes, tipos_cafe=TIPOS_CAFE)
+                           pessoas=pessoas_rows, lotes=lotes, tipos_cafe=TIPOS_CAFE,
+                           pendencias=pendencias,
+                           ultimo_backup_nome=ultimo_backup.name if ultimo_backup else None)
+
+
+@app.route('/api/clientes/<int:pessoa_id>/resumo')
+def api_resumo_cliente(pessoa_id):
+    dados = resumo_cliente_automatico(pessoa_id)
+    if not dados:
+        return jsonify({'erro': 'Cliente não encontrado'}), 404
+    return jsonify(dados)
+
+
+@app.route('/pendencias')
+def pendencias():
+    dados = pendencias_automaticas()
+    return render_template('pendencias.html', **dados, hoje=today())
+
+
+@app.route('/fechamento-dia')
+def fechamento_dia():
+    data_ref = request.args.get('data') or today()
+    dados = fechamento_do_dia(data_ref)
+    return render_template('fechamento_dia.html', **dados)
+
+
+@app.route('/backup/automatico/agora', methods=['POST'])
+def backup_automatico_agora():
+    destino = criar_backup_automatico(True, 'Backup automático solicitado')
+    flash(f'Backup automático criado: {destino.name if destino else "não criado"}.')
+    return redirect(request.referrer or url_for('backup'))
 
 
 def achar_ou_criar_pessoa_rapida(nome, whatsapp='', documento=''):
@@ -519,8 +722,8 @@ def achar_ou_criar_pessoa_rapida(nome, whatsapp='', documento=''):
     if existente:
         return existente['id']
     con = db(); cur = con.cursor()
-    cur.execute("INSERT INTO pessoas (nome,tipo,telefone,whatsapp,documento) VALUES (?,?,?,?,?)",
-                (nome, 'Cliente/Produtor', whatsapp, whatsapp, documento))
+    cur.execute("INSERT INTO pessoas (nome,tipo,telefone,whatsapp,documento,criado_em) VALUES (?,?,?,?,?,?)",
+                (nome, 'Cliente/Produtor', whatsapp, whatsapp, documento, datetime.now().isoformat(timespec='seconds')))
     pessoa_id = cur.lastrowid
     con.commit(); con.close()
     log_acao('Cliente rápido criado', 'pessoa', pessoa_id, nome)
@@ -552,13 +755,38 @@ def balcao_prova():
     if not (qtd or bebida or cata or umidade or obs):
         flash('Preencha pelo menos uma informação da prova antes de salvar.')
         return redirect(url_for('modo_rapido'))
+    data_prova = request.form.get('data') or today()
     con = db(); cur = con.cursor()
     cur.execute("""INSERT INTO provas (pessoa_id,data,cata,nome_avulso,quantidade,quantidade_sacas,bebida,umidade,aprovado,observacao)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (pessoa_id, request.form.get('data') or today(), cata, nome_rapido if not pessoa_id else '', qtd, qtd, bebida, umidade, request.form.get('aprovado') or 'Em análise', obs))
+                (pessoa_id, data_prova, cata, nome_rapido if not pessoa_id else '', qtd, qtd, bebida, umidade, request.form.get('aprovado') or 'Em análise', obs))
     prova_id = cur.lastrowid
+    compra_id = None
+    if request.form.get('criar_deposito') == '1':
+        peso = fnum('deposito_peso_kg')
+        divisor = fnum('deposito_divisor_saca') or 60
+        qtd_deposito = qtd or (peso/divisor if peso else 0)
+        if qtd_deposito > 0:
+            valor_saca = fnum('deposito_valor_saca')
+            total = qtd_deposito * valor_saca
+            lote = (request.form.get('deposito_lote') or '').strip() or f'Prova {prova_id}'
+            tipo = (request.form.get('deposito_tipo_cafe') or '').strip() or bebida
+            origem = (request.form.get('deposito_origem') or '').strip()
+            cur.execute("""INSERT INTO compras (pessoa_id,data,lote,tipo_cafe,quantidade_sacas,peso_kg,divisor_saca,ajuste_sacas,valor_saca,valor_total,status_pagamento,forma_pagamento,frete,outras_despesas,origem_cafe,status_lote,observacao)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (pessoa_id, data_prova, lote, tipo, qtd_deposito, peso, divisor, 0, valor_saca, total,
+                         'Pendente' if total > 0 else 'Sem preço', '', 0, 0, origem, 'Em estoque', f'Depósito criado automaticamente pela prova #{prova_id}. {obs}'))
+            compra_id = cur.lastrowid
+            cur.execute("UPDATE provas SET compra_id=?, aprovado='Aprovado' WHERE id=?", (compra_id, prova_id))
+            if total > 0:
+                cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                            (data_prova, 'Saída', f'Café em depósito/compra - {lote}', 'Compra de café', total, 'Pendente', f'compra:{compra_id}'))
     con.commit(); con.close()
     log_acao('Prova rápida lançada no balcão', 'prova', prova_id, f'{br_num(qtd)} sacas - {bebida}')
+    if compra_id:
+        log_acao('Depósito criado automaticamente pela prova', 'compra', compra_id, f'Prova #{prova_id}')
+        flash('Prova salva e café colocado em depósito automaticamente.')
+        return redirect(url_for('editar_compra', compra_id=compra_id))
     flash('Prova salva. Já ficou no histórico do cliente.')
     return redirect(url_for('modo_rapido'))
 
@@ -577,13 +805,19 @@ def balcao_deposito():
         flash('Informe o peso ou a quantidade de sacas para lançar o café em depósito.')
         return redirect(url_for('modo_rapido'))
     con = db(); cur = con.cursor()
+    data_lancamento = request.form.get('data') or today()
+    lote_informado = (request.form.get('lote') or '').strip()
     cur.execute("""INSERT INTO compras (pessoa_id,data,lote,tipo_cafe,quantidade_sacas,peso_kg,divisor_saca,ajuste_sacas,valor_saca,valor_total,status_pagamento,forma_pagamento,frete,outras_despesas,origem_cafe,status_lote,observacao)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (pessoa_id, request.form.get('data') or today(), request.form.get('lote'), request.form.get('tipo_cafe'), qtd, peso, divisor, ajuste, valor_saca, total, 'Pendente', '', 0, 0, request.form.get('origem_cafe'), 'Em estoque', request.form.get('observacao')))
+                (pessoa_id, data_lancamento, lote_informado, request.form.get('tipo_cafe'), qtd, peso, divisor, ajuste, valor_saca, total,
+                 'Pendente' if total > 0 else 'Sem preço', '', 0, 0, request.form.get('origem_cafe'), 'Em estoque', request.form.get('observacao')))
     compra_id = cur.lastrowid
-    lote = request.form.get('lote') or f'Lote {compra_id}'
-    cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
-                (request.form.get('data') or today(), 'Saída', f'Café em depósito/compra - {lote}', 'Compra de café', total, 'Pendente', f'compra:{compra_id}'))
+    lote = lote_informado or f'Lote {compra_id}'
+    if not lote_informado:
+        cur.execute("UPDATE compras SET lote=? WHERE id=?", (lote, compra_id))
+    if total > 0:
+        cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                    (data_lancamento, 'Saída', f'Café em depósito/compra - {lote}', 'Compra de café', total, 'Pendente', f'compra:{compra_id}'))
     con.commit(); con.close()
     update_compra_status(compra_id)
     log_acao('Café em depósito lançado pelo balcão', 'compra', compra_id, f'{lote} - {br_num(qtd)} sacas')
@@ -914,13 +1148,18 @@ def painel_cliente(pessoa_id):
     total_adiantamentos = sum(float(a.get('valor') or 0) for a in adiantamentos_abertos)
     juros_adiantamentos = sum(float(a.get('valor_juros') or 0) for a in adiantamentos_abertos)
     total_adiantamentos_juros = sum(float(a.get('valor_total') or 0) for a in adiantamentos_abertos)
+    saldo_liquido = float(saldo_pendente or 0) - total_adiantamentos_juros
+    liquido_a_pagar = max(0.0, saldo_liquido)
+    saldo_devedor = max(0.0, -saldo_liquido)
     juros = saldo_pendente * (taxa/100) * meses
     contas = fetchall("SELECT * FROM contas_cliente WHERE pessoa_id=? ORDER BY id DESC", (pessoa_id,))
     return render_template('cliente_painel.html', pessoa=pessoa, vendas=vendas_rows, compras=compras_rows, provas=provas_rows,
                            estoque_tipo=estoque_tipo, saldo_tipo=saldo_tipo, saldo_pendente=saldo_pendente,
                            taxa=taxa, meses=meses, juros=juros, total_com_juros=saldo_pendente+juros, tipos_cafe=TIPOS_CAFE,
                            adiantamentos=adiantamentos, total_adiantamentos=total_adiantamentos,
-                           juros_adiantamentos=juros_adiantamentos, total_adiantamentos_juros=total_adiantamentos_juros, contas=contas, hoje=today())
+                           juros_adiantamentos=juros_adiantamentos, total_adiantamentos_juros=total_adiantamentos_juros,
+                           liquido_a_pagar=liquido_a_pagar, saldo_devedor=saldo_devedor,
+                           contas=contas, hoje=today())
 
 
 @app.route('/clientes/<int:pessoa_id>/aplicar-juros', methods=['POST'])
@@ -1175,8 +1414,8 @@ def prova_para_compra(prova_id):
         pessoa_id = cur.lastrowid
         cur.execute("UPDATE provas SET pessoa_id=? WHERE id=?", (pessoa_id, prova_id))
         con.commit(); con.close()
-    if qtd <= 0 or valor_saca <= 0:
-        flash('Informe quantidade na prova e valor por saca para transformar em compra.')
+    if qtd <= 0:
+        flash('Informe a quantidade na prova para transformar em depósito.')
         return redirect(url_for('provas'))
     lote = request.form.get('lote') or f"Prova {prova_id}"
     tipo = prova['bebida'] or request.form.get('tipo_cafe')
@@ -1184,11 +1423,14 @@ def prova_para_compra(prova_id):
     con = db(); cur = con.cursor()
     cur.execute("""INSERT INTO compras (pessoa_id,data,lote,tipo_cafe,quantidade_sacas,peso_kg,divisor_saca,ajuste_sacas,valor_saca,valor_total,status_pagamento,forma_pagamento,status_lote,observacao)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (pessoa_id, today(), lote, tipo, qtd, 0, 60, 0, valor_saca, total, request.form.get('status_pagamento') or 'Pendente', request.form.get('forma_pagamento'), 'Em estoque', f'Compra gerada pela prova #{prova_id}'))
+                (pessoa_id, today(), lote, tipo, qtd, 0, 60, 0, valor_saca, total,
+                 (request.form.get('status_pagamento') or ('Pendente' if total > 0 else 'Sem preço')),
+                 request.form.get('forma_pagamento'), 'Em estoque', f'Compra gerada pela prova #{prova_id}'))
     compra_id = cur.lastrowid
     cur.execute("UPDATE provas SET compra_id=?, aprovado='Aprovado' WHERE id=?", (compra_id, prova_id))
-    cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
-                (today(), 'Saída', f'Compra de café - {lote}', 'Compra de café', total, request.form.get('status_pagamento') or 'Pendente', f'compra:{compra_id}'))
+    if total > 0:
+        cur.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                    (today(), 'Saída', f'Compra de café - {lote}', 'Compra de café', total, request.form.get('status_pagamento') or 'Pendente', f'compra:{compra_id}'))
     con.commit(); con.close()
     log_acao('Prova transformada em compra', 'prova', prova_id, f"Compra #{compra_id}")
     flash('Prova transformada em compra e enviada para o estoque do cliente.')
@@ -1443,11 +1685,23 @@ def extrato_cliente(pessoa_id):
     adiant_sem = sum(float(a.get('valor') or 0) for a in adiantamentos_abertos)
     adiant_juros = sum(float(a.get('valor_juros') or 0) for a in adiantamentos_abertos)
     adiant_total = sum(float(a.get('valor_total') or 0) for a in adiantamentos_abertos)
-    texto = f"""Café Boa Vista\nExtrato do cliente\n\nCliente: {pessoa['nome']}\nSaldo vendas pendentes: {br_money(saldo_vendas)}\nValores pegos sem juros: {br_money(adiant_sem)}\nJuros: {br_money(adiant_juros)}\nTotal para acerto: {br_money(saldo_vendas + adiant_total)}"""
+    saldo_liquido = float(saldo_vendas or 0) - adiant_total
+    liquido_a_pagar = max(0.0, saldo_liquido)
+    saldo_devedor = max(0.0, -saldo_liquido)
+    texto = f"""Café Boa Vista
+Extrato do cliente
+
+Cliente: {pessoa['nome']}
+Vendas pendentes: {br_money(saldo_vendas)}
+Valores pegos sem juros: {br_money(adiant_sem)}
+Juros: {br_money(adiant_juros)}
+Total a descontar: {br_money(adiant_total)}
+Líquido a pagar: {br_money(liquido_a_pagar)}
+Saldo devedor: {br_money(saldo_devedor)}"""
     return render_template('extrato_cliente.html', pessoa=pessoa, vendas=vendas_rows, compras=compras_rows, provas=provas_rows,
                            adiantamentos=adiantamentos_rows, estoque_tipo=estoque_tipo, saldo_vendas=saldo_vendas,
-                           adiant_sem=adiant_sem, adiant_juros=adiant_juros, adiant_total=adiant_total, texto_whatsapp=texto)
-
+                           adiant_sem=adiant_sem, adiant_juros=adiant_juros, adiant_total=adiant_total,
+                           liquido_a_pagar=liquido_a_pagar, saldo_devedor=saldo_devedor, texto_whatsapp=texto)
 
 
 @app.route('/clientes/<int:pessoa_id>/acerto')
@@ -1462,20 +1716,29 @@ def acertar_tudo_cliente(pessoa_id):
     dados = get_acerto_data(pessoa_id)
     if not dados:
         flash('Cliente não encontrado.'); return redirect(url_for('clientes'))
-    pessoa = dados['pessoa']; total = dados['total']
+    pessoa = dados['pessoa']
+    total = float(dados['total'] or 0)
+    saldo_devedor = float(dados['saldo_devedor'] or 0)
     vendas_ids = [v['id'] for v in dados['vendas']]
     adiant_ids = [a['id'] for a in dados['adiantamentos']]
+    criar_backup_automatico(True, 'Backup antes do acerto do cliente')
     con = db()
     for vid in vendas_ids:
         con.execute("UPDATE vendas SET status_recebimento='Pago ao cliente' WHERE id=?", (vid,))
-        con.execute("UPDATE financeiro SET status='Pago' WHERE origem=?", (f"venda:{vid}",))
+        con.execute("DELETE FROM financeiro WHERE origem=?", (f"venda:{vid}",))
     for aid in adiant_ids:
-        con.execute("UPDATE adiantamentos SET status='Pago' WHERE id=?", (aid,))
-    con.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
-                (today(), 'Entrada', f"Acerto geral - {pessoa['nome']}", 'Acerto de cliente', total, 'Pago', f"acerto:{pessoa_id}:{datetime.now().timestamp()}"))
+        con.execute("UPDATE adiantamentos SET status='Descontado no acerto' WHERE id=?", (aid,))
+    origem = f"acerto:{pessoa_id}:{datetime.now().timestamp()}"
+    if total > 0:
+        con.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                    (today(), 'Saída', f"Pagamento líquido do acerto - {pessoa['nome']}", 'Acerto de cliente', total, 'Pago', origem))
+    elif saldo_devedor > 0:
+        con.execute("INSERT INTO financeiro (data,tipo,descricao,categoria,valor,status,origem) VALUES (?,?,?,?,?,?,?)",
+                    (today(), 'Entrada', f"Saldo devedor após acerto - {pessoa['nome']}", 'Saldo devedor do cliente', saldo_devedor, 'Pendente', origem))
     con.commit(); con.close()
-    log_acao('Acerto geral do cliente', 'pessoa', pessoa_id, f'Total acertado: {br_money(total)}')
-    flash('Acerto geral confirmado. Vendas pendentes e valores pegos foram marcados como pagos.')
+    detalhe = f'Líquido pago: {br_money(total)}; saldo devedor: {br_money(saldo_devedor)}'
+    log_acao('Acerto geral do cliente', 'pessoa', pessoa_id, detalhe)
+    flash('Acerto confirmado. Vendas foram fechadas e valores pegos foram descontados automaticamente.')
     return redirect(url_for('painel_cliente', pessoa_id=pessoa_id))
 
 
@@ -1503,16 +1766,26 @@ def backup():
         if not arquivo or not arquivo.filename:
             flash('Selecione um arquivo de backup .sqlite3 para restaurar.')
             return redirect(url_for('backup'))
-        backup_path = DB_DIR / f"backup_antes_restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sqlite3"
-        if DB_PATH.exists():
-            shutil.copy(DB_PATH, backup_path)
+        backup_path = criar_backup_automatico(True, 'Backup antes de restaurar')
         arquivo.save(DB_PATH)
         log_acao('Backup restaurado', 'sistema', None, f'Backup anterior salvo em {backup_path.name}')
         flash('Backup restaurado. Faça redeploy/reinicie o app se alguma tela não atualizar na hora.')
         return redirect(url_for('backup'))
     historico_rows = fetchall("SELECT * FROM historico ORDER BY id DESC LIMIT 80")
     last_backup = fetchone("SELECT * FROM historico WHERE acao LIKE 'Backup%' ORDER BY id DESC LIMIT 1")
-    return render_template('backup.html', historico=historico_rows, last_backup=last_backup)
+    backups_auto = sorted(BACKUP_DIR.glob('auto_*.sqlite3'), key=lambda x: x.stat().st_mtime, reverse=True)[:15]
+    backups_auto = [{'nome': x.name, 'data': datetime.fromtimestamp(x.stat().st_mtime).strftime('%d/%m/%Y %H:%M'), 'tamanho': x.stat().st_size} for x in backups_auto]
+    return render_template('backup.html', historico=historico_rows, last_backup=last_backup, backups_auto=backups_auto)
+
+
+@app.route('/backup/automatico/<path:nome>')
+def baixar_backup_automatico(nome):
+    nome_seguro = Path(nome).name
+    arquivo = BACKUP_DIR / nome_seguro
+    if not arquivo.exists() or not nome_seguro.startswith('auto_'):
+        flash('Backup automático não encontrado.')
+        return redirect(url_for('backup'))
+    return send_file(arquivo, as_attachment=True, download_name=nome_seguro)
 
 
 @app.route('/backup/baixar')
@@ -1572,4 +1845,4 @@ def historico():
 init_db()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=False)

@@ -13,6 +13,13 @@
     </div>
   </div>
 
+  <div class="grid metrics automacao-metrics">
+    <a class="card metric {% if pendencias.provas_analise %}warn{% endif %}" href="{{ url_for('cafes_analise') }}"><small>Provas aguardando resultado</small><strong>{{ pendencias.provas_analise }}</strong></a>
+    <a class="card metric {% if pendencias.vendas_pendentes %}warn{% endif %}" href="{{ url_for('pendencias') }}"><small>Pagamentos pendentes</small><strong>{{ pendencias.vendas_pendentes }}</strong></a>
+    <a class="card metric" href="{{ url_for('pendencias') }}"><small>Lotes sem movimento há 20 dias</small><strong>{{ pendencias.lotes_parados|length }}</strong></a>
+    <a class="card metric good" href="{{ url_for('backup') }}"><small>Backup automático de hoje</small><strong>{% if pendencias.backup_hoje %}OK{% else %}Pendente{% endif %}</strong></a>
+  </div>
+
   <div class="card balcao-cliente">
     <div class="section-title"><h2>1. Cliente do atendimento</h2><small>Selecione ou digite rápido</small></div>
     <div class="form balcao-cliente-form">
@@ -22,6 +29,21 @@
       <div><label>WhatsApp</label><input id="whatsapp-rapido-balcao" placeholder="Opcional"></div>
       <div><label>CPF/CNPJ</label><input id="documento-rapido-balcao" placeholder="Opcional"></div>
       <div class="balcao-selected"><small>Atendimento atual</small><strong id="cliente-atual-label">Nenhum cliente selecionado</strong><span id="cliente-atual-extra">Digite ou selecione acima.</span></div>
+    </div>
+  </div>
+
+  <div class="card resumo-cliente-auto" id="resumo-cliente-auto" hidden>
+    <div class="section-title"><h2>Resumo automático do cliente</h2><small>Carregado ao selecionar o nome</small></div>
+    <div class="grid metrics resumo-cliente-metrics">
+      <div class="metric"><small>Sacas em depósito</small><strong id="rc-sacas">0,00</strong></div>
+      <div class="metric"><small>Vendas a pagar</small><strong id="rc-vendas">R$ 0,00</strong></div>
+      <div class="metric warn"><small>Valores pegos + juros</small><strong id="rc-desconto">R$ 0,00</strong></div>
+      <div class="metric good"><small>Líquido a pagar</small><strong id="rc-liquido">R$ 0,00</strong></div>
+    </div>
+    <div class="row resumo-auto-row">
+      <div><h3>Última prova</h3><p id="rc-prova">Nenhuma prova salva.</p></div>
+      <div><h3>Conta/Pix principal</h3><p id="rc-conta">Nenhuma conta ou Pix cadastrado.</p></div>
+      <div><h3>Atalhos</h3><div class="quick"><a id="rc-painel" class="mini" href="#">Painel completo</a><a id="rc-acerto" class="mini" href="#" target="_blank">Fechar conta</a></div></div>
     </div>
   </div>
 
@@ -45,6 +67,18 @@
         <div><label>Umidade</label><input name="umidade" placeholder="Ex: 12%"></div>
         <div><label>Resultado</label><select name="aprovado"><option>Em análise</option><option>Aprovado</option><option>Reprovado</option></select></div>
         <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: aguardando resposta, bebida com observação..."></div>
+        <details class="advanced span-full automacao-prova">
+          <summary>Automação: colocar este café em depósito ao salvar</summary>
+          <div class="form advanced-grid">
+            <label class="checkline span"><input type="checkbox" name="criar_deposito" value="1" id="criar-deposito-prova"> Criar lote/depósito automaticamente</label>
+            <div><label>Lote</label><input name="deposito_lote" placeholder="Automático se vazio"></div>
+            <div><label>Tipo</label><input name="deposito_tipo_cafe" placeholder="Usa a bebida se vazio"></div>
+            <div><label>Peso em KG</label><input type="number" step="0.01" name="deposito_peso_kg" placeholder="Opcional"></div>
+            <div><label>KG por saca</label><input type="number" step="0.01" name="deposito_divisor_saca" value="60"></div>
+            <div><label>Preço referência</label><input type="number" step="0.01" name="deposito_valor_saca" value="0"><small class="hint">Pode ficar zero se ainda não fez preço.</small></div>
+            <div><label>Fazenda/origem</label><input name="deposito_origem"></div>
+          </div>
+        </details>
         <button class="btn btn-balcao">Salvar prova</button>
       </form>
     </section>
@@ -79,7 +113,7 @@
         <div><label>Valor por saca</label><input type="number" step="0.01" name="valor_saca" id="valor-venda-balcao" required placeholder="Ex: 1300"></div>
         <div><label>Total da venda</label><input id="total-venda-balcao" readonly value="R$ 0,00"></div>
         <div><label>Pagamento ao cliente</label><select name="status_recebimento"><option value="A pagar ao cliente">A pagar ao cliente</option><option value="Pago ao cliente">Pago ao cliente</option></select></div>
-        <div><label>Forma pagamento</label><input name="forma_pagamento" placeholder="Pix, Sicoob, dinheiro..."></div>
+        <div><label>Forma pagamento</label><input name="forma_pagamento" id="forma-pagamento-balcao" placeholder="Pix, Sicoob, dinheiro..."></div>
         <div class="span"><label>Observação</label><input name="observacao" placeholder="Ex: venda parcial feita no balcão"></div>
         <button class="btn btn-balcao">Salvar venda e abrir recibo</button>
       </form>
@@ -105,6 +139,8 @@
         <button class="btn" type="button" id="btn-abrir-painel">Abrir painel do cliente</button>
         <button class="btn light" type="button" id="btn-acerto-cliente">Fazer acerto</button>
         <a class="btn light" href="{{ url_for('depositos') }}">Ver todos os cafés em depósito</a>
+        <a class="btn light" href="{{ url_for('fechamento_dia') }}" target="_blank">Fechamento de hoje</a>
+        <a class="btn light" href="{{ url_for('pendencias') }}">Ver pendências</a>
       </div>
       <p class="subtitle">Selecione um cliente cadastrado no topo para abrir o painel completo. Para nome rápido, salve primeiro uma prova ou entrada de café.</p>
       <div class="card mini-saldo"><h2>Cafés em depósito disponíveis</h2><table id="tabela-lotes-balcao"><tr><th>Cliente</th><th>Lote</th><th>Tipo</th><th>Saldo</th><th>Ações</th></tr>{% for l in lotes %}<tr data-pessoa="{{ l.pessoa_id or '' }}" data-text="{{ (l.pessoa_nome or '') ~ ' ' ~ (l.lote or '') ~ ' ' ~ (l.tipo_cafe or '') }}"><td>{{ l.pessoa_nome or '-' }}</td><td>{{ l.lote or ('Lote ' ~ l.id) }}</td><td>{{ l.tipo_cafe or '-' }}</td><td><b>{{ l.estoque_lote|num }}</b> sacas</td><td><a class="mini" href="{{ url_for('historico_lote', compra_id=l.id) }}" target="_blank">Histórico</a><a class="mini" href="{{ url_for('editar_compra', compra_id=l.id) }}">Abrir</a></td></tr>{% endfor %}</table></div>
@@ -132,7 +168,7 @@
 </div>
 
 <style>
-.balcao-wrap{max-width:1450px}.balcao-hero{border:2px solid #cbe8d1}.balcao-cliente{position:sticky;top:8px;z-index:20}.balcao-cliente-form{grid-template-columns:repeat(6,minmax(140px,1fr));align-items:end}.balcao-selected{background:#ecf8ef;border:1px solid #cfe6d3;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:4px}.balcao-selected strong{font-size:17px}.balcao-tab-buttons{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}.tab-btn{border:1px solid #d5e7d7;background:#f6fbf7;border-radius:16px;padding:14px 10px;font-weight:900;color:#15682a;cursor:pointer}.tab-btn.active{background:linear-gradient(135deg,var(--accent),#49b359);color:#fff;border-color:transparent;box-shadow:0 8px 18px rgba(31,141,58,.20)}.tab-panel{display:none}.tab-panel.active{display:block}.btn-balcao{font-size:16px;min-height:48px}.saldo-actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}.mini-saldo{box-shadow:none;background:#fff}.balcao-resumo{margin:18px 0}.movimento-card{margin-top:18px}.balcao-tabs .form{margin-bottom:0}.balcao-copy-client .checkline{align-self:end}@media(max-width:980px){.balcao-cliente{position:static}.balcao-cliente-form{grid-template-columns:1fr}.balcao-tab-buttons{grid-template-columns:1fr 1fr}.tab-btn{font-size:13px;padding:12px 8px}.balcao-tabs .form{grid-template-columns:1fr}.saldo-actions{display:grid}.saldo-actions .btn{width:100%;text-align:center}}
+.balcao-wrap{max-width:1450px}.automacao-metrics a{text-decoration:none;color:inherit}.resumo-cliente-auto{border:2px solid #d9eadc}.resumo-auto-row>div{padding:10px 14px;background:#f8fbf8;border-radius:14px}.automacao-prova{background:#f5fbf6;border:1px solid #d5e7d7;border-radius:14px;padding:10px 14px}.balcao-hero{border:2px solid #cbe8d1}.balcao-cliente{position:sticky;top:8px;z-index:20}.balcao-cliente-form{grid-template-columns:repeat(6,minmax(140px,1fr));align-items:end}.balcao-selected{background:#ecf8ef;border:1px solid #cfe6d3;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:4px}.balcao-selected strong{font-size:17px}.balcao-tab-buttons{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}.tab-btn{border:1px solid #d5e7d7;background:#f6fbf7;border-radius:16px;padding:14px 10px;font-weight:900;color:#15682a;cursor:pointer}.tab-btn.active{background:linear-gradient(135deg,var(--accent),#49b359);color:#fff;border-color:transparent;box-shadow:0 8px 18px rgba(31,141,58,.20)}.tab-panel{display:none}.tab-panel.active{display:block}.btn-balcao{font-size:16px;min-height:48px}.saldo-actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}.mini-saldo{box-shadow:none;background:#fff}.balcao-resumo{margin:18px 0}.movimento-card{margin-top:18px}.balcao-tabs .form{margin-bottom:0}.balcao-copy-client .checkline{align-self:end}@media(max-width:980px){.balcao-cliente{position:static}.balcao-cliente-form{grid-template-columns:1fr}.balcao-tab-buttons{grid-template-columns:1fr 1fr}.tab-btn{font-size:13px;padding:12px 8px}.balcao-tabs .form{grid-template-columns:1fr}.saldo-actions{display:grid}.saldo-actions .btn{width:100%;text-align:center}}
 </style>
 <script>
 const clienteSelect = document.getElementById('cliente-balcao');
@@ -162,6 +198,7 @@ function atualizaClienteBalcao(){
     const hDoc = form.querySelector('[name="documento_rapido"]'); if(hDoc) hDoc.value = c.documento;
   });
   filtraLotes();
+  carregarResumoCliente(c.id);
 }
 ['change','input'].forEach(ev=>{clienteSelect.addEventListener(ev, atualizaClienteBalcao); nomeRapido.addEventListener(ev, atualizaClienteBalcao); whatsappRapido.addEventListener(ev, atualizaClienteBalcao); documentoRapido.addEventListener(ev, atualizaClienteBalcao);});
 document.getElementById('busca-cliente-balcao').addEventListener('input', function(){
@@ -177,6 +214,33 @@ document.querySelectorAll('.tab-btn').forEach(btn=>btn.addEventListener('click',
 
 function brMoney(v){return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
 function brNum(v){return (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});}
+async function carregarResumoCliente(id){
+  const box=document.getElementById('resumo-cliente-auto');
+  if(!id){ box.hidden=true; return; }
+  box.hidden=false;
+  document.getElementById('rc-prova').textContent='Carregando...';
+  try{
+    const resp=await fetch('/api/clientes/'+id+'/resumo');
+    if(!resp.ok) throw new Error('Falha ao carregar');
+    const d=await resp.json();
+    document.getElementById('rc-sacas').textContent=brNum(d.sacas_deposito||0);
+    document.getElementById('rc-vendas').textContent=brMoney(d.vendas_pendentes||0);
+    document.getElementById('rc-desconto').textContent=brMoney(d.total_desconto||0);
+    document.getElementById('rc-liquido').textContent=brMoney(d.liquido_a_pagar||0);
+    const p=d.ultima_prova;
+    document.getElementById('rc-prova').textContent=p ? ((p.data||'')+' • '+(p.bebida||'-')+' • Cata '+(p.cata||'-')+' • '+(p.aprovado||'Em análise')) : 'Nenhuma prova salva.';
+    const c=d.conta_principal;
+    let contaTexto='Nenhuma conta ou Pix cadastrado.';
+    if(c){ contaTexto=[c.banco,c.pix ? 'Pix '+c.pix : '',c.agencia ? 'Ag. '+c.agencia : '',c.conta ? 'Conta '+c.conta : ''].filter(Boolean).join(' • '); }
+    document.getElementById('rc-conta').textContent=contaTexto;
+    document.getElementById('rc-painel').href='/clientes/'+id;
+    document.getElementById('rc-acerto').href='/clientes/'+id+'/acerto';
+    const forma=document.getElementById('forma-pagamento-balcao');
+    if(forma && c && !forma.value){ forma.value=c.pix ? ('Pix '+c.pix+(c.banco?' • '+c.banco:'')) : ([c.banco,c.agencia,c.conta].filter(Boolean).join(' • ')); }
+  }catch(err){
+    document.getElementById('rc-prova').textContent='Não foi possível carregar o resumo agora.';
+  }
+}
 function filtraLotes(){
   const c = clienteAtual();
   const q = (document.getElementById('busca-lote-balcao')?.value || '').toLowerCase();
@@ -190,6 +254,8 @@ function filtraLotes(){
     });
     const escolhido = sel.options[sel.selectedIndex];
     if(escolhido && escolhido.hidden){ sel.value=''; }
+    const visiveis=[...sel.options].filter((op,i)=>i>0 && !op.hidden);
+    if(!sel.value && visiveis.length===1){ sel.value=visiveis[0].value; }
   }
   document.querySelectorAll('#tabela-lotes-balcao tr[data-pessoa]').forEach(tr=>{
     const bateCliente = !c.id || tr.dataset.pessoa === c.id;
